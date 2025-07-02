@@ -1,21 +1,26 @@
 
-import { useState } from 'react';
+import React, { useRef, useEffect } from 'react';
 import { sendUserPrompt, calculatePricing } from './api';
 
 type Message = { role: 'user' | 'ai'; content: string };
 
 function App() {
-  const [messages, setMessages] = useState<Message[]>([
+  const [messages, setMessages] = React.useState<Message[]>([
     {
       role: 'ai',
       content:
         "Hello! I'm your SCCC AI Solution Advisor. Please describe your customer's needs or the problem they are trying to solve.",
     },
   ]);
-  const [input, setInput] = useState('');
-  const [suggestedSolution, setSuggestedSolution] = useState<any>(null);
-  const [pricing, setPricing] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
+  const [input, setInput] = React.useState('');
+  const [suggestedSolution, setSuggestedSolution] = React.useState<any>(null);
+  const [pricing, setPricing] = React.useState<any>(null);
+  const [loading, setLoading] = React.useState(false);
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, loading]);
 
   // Chat send handler
   const handleSend = async () => {
@@ -26,7 +31,6 @@ function App() {
     try {
       // 1. Get AI config from backend
       const aiConfig = await sendUserPrompt('recommendation', input);
-      console.log('AI Config received:', aiConfig);
       setMessages((prev) => [
         ...prev,
         { role: 'ai', content: 'Here is the recommended configuration:' },
@@ -34,14 +38,12 @@ function App() {
       setSuggestedSolution(aiConfig);
       // 2. Get pricing from backend
       const price = await calculatePricing(aiConfig);
-      console.log('Pricing received:', price);
       setPricing(price);
     } catch (e) {
       setMessages((prev) => [
         ...prev,
         { role: 'ai', content: 'Error: Unable to get AI recommendation or pricing.' },
       ]);
-      console.error('Error in handleSend:', e);
     }
     setLoading(false);
   };
@@ -66,42 +68,42 @@ function App() {
       <header className="bg-white shadow-sm py-3 sticky top-0 z-20">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center">
           <div className="flex items-center">
-            <span className="bg-orange-500 text-white font-bold px-4 py-2 rounded mr-3 text-lg shadow-sm">
-              SCCC AI Advisor
-            </span>
+            <img src="https://placehold.co/150x35/FF6A00/FFFFFF?text=SCCC+AI+Advisor&font=Inter" alt="SCCC AI Advisor Logo" className="h-8 w-auto mr-3" />
           </div>
           <span className="text-sm text-gray-500">Sales Agent: Hiba</span>
         </div>
       </header>
-      {/* Main */}
-      <main className="flex-grow container mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        <div className="flex flex-col md:flex-row gap-6 md:gap-8 h-full">
+
+      {/* Main Content */}
+      <main className="flex-grow container mx-auto px-2 sm:px-4 lg:px-8 py-4">
+        <div className="flex flex-row gap-4 h-full w-full" style={{minHeight: '500px'}}>
           {/* Chat Panel */}
-          <div className="w-full md:w-1/2 lg:w-2/5 flex flex-col bg-white shadow-lg rounded-lg overflow-hidden">
+          <div className="flex-1 flex flex-col bg-white shadow-lg rounded-lg overflow-hidden min-w-[320px] max-w-[540px]" style={{flexBasis: '38%'}}>
             <div className="p-4 border-b border-[#E0E0E0]">
               <h2 className="text-lg font-semibold text-gray-700">AI Consultation Chat</h2>
             </div>
-            <div className="scrollable-chat flex-grow p-4 space-y-4 overflow-y-auto min-h-[300px]" style={{height: 'calc(100vh - 280px)'}}>
+            <div className="scrollable-chat flex-grow p-4 space-y-4 overflow-y-auto" style={{height: 'calc(100vh - 280px)', minHeight: '300px'}}>
               {messages.map((msg, i) => (
                 <div
                   key={i}
-                  className={`chat-bubble ${msg.role === 'user' ? 'chat-bubble-user ml-auto' : 'chat-bubble-ai'} text-base`}
+                  className={`chat-bubble text-base ${msg.role === 'user' ? 'ml-auto' : ''}`}
                   style={{
                     backgroundColor: msg.role === 'user' ? '#E0E0E0' : '#0070E0',
                     color: msg.role === 'user' ? '#333' : '#fff',
+                    borderRadius: '1rem',
                     borderBottomRightRadius: msg.role === 'user' ? '0.25rem' : '1rem',
                     borderBottomLeftRadius: msg.role === 'ai' ? '0.25rem' : '1rem',
                     maxWidth: '80%',
                     padding: '0.75rem 1rem',
-                    borderRadius: '1rem',
                     lineHeight: 1.5,
                   }}
                   dangerouslySetInnerHTML={{ __html: msg.content }}
                 />
               ))}
               {loading && (
-                <div className="chat-bubble chat-bubble-ai italic text-gray-300" style={{backgroundColor:'#0070E0',color:'#fff'}}>AI is typing...</div>
+                <div className="chat-bubble italic text-gray-300" style={{backgroundColor:'#0070E0',color:'#fff',borderRadius:'1rem',borderBottomLeftRadius:'0.25rem',maxWidth:'80%',padding:'0.75rem 1rem',lineHeight:1.5}}>AI is typing...</div>
               )}
+              <div ref={chatEndRef} />
             </div>
             <form
               className="flex gap-2 border-t border-[#E0E0E0] p-4 bg-gray-50"
@@ -112,7 +114,8 @@ function App() {
             >
               <textarea
                 rows={2}
-                className="form-textarea flex-grow resize-none rounded-md border border-gray-300 p-2.5 text-sm focus:border-orange-500 focus:ring-2 focus:ring-orange-300"
+                className="form-textarea flex-grow resize-none rounded-md border border-orange-500 p-2.5 text-sm focus:border-orange-500 focus:ring-2 focus:ring-orange-300 outline-none"
+                style={{boxShadow: input ? '0 0 0 2px rgba(255,106,0,0.3)' : undefined}}
                 placeholder="Type your customer's requirements..."
                 value={input}
                 onChange={e => setInput(e.target.value)}
@@ -122,13 +125,15 @@ function App() {
                 type="submit"
                 className="btn-primary self-end bg-[#FF6A00] hover:bg-[#E65C00] text-white font-semibold px-5 py-2.5 rounded-md text-base transition"
                 disabled={loading || !input.trim()}
+                style={{minWidth:'90px'}}
               >
                 Send
               </button>
             </form>
           </div>
+
           {/* Solution Panel */}
-          <div className="w-full md:w-1/2 lg:w-3/5 flex flex-col bg-white shadow-lg rounded-lg overflow-hidden solution-panel-height min-h-[400px]" style={{height: 'calc(100vh - 120px)'}}>
+          <div className="flex-1 flex flex-col bg-white shadow-lg rounded-lg overflow-hidden solution-panel-height min-h-[400px]" style={{height: 'calc(100vh - 120px)', minWidth: '400px', flexBasis: '62%'}}>
             <div className="p-4 border-b border-[#E0E0E0]">
               <h2 className="text-lg font-semibold text-gray-700">AI Suggested Solution & Estimate</h2>
             </div>
@@ -182,6 +187,8 @@ function App() {
           </div>
         </div>
       </main>
+
+      {/* Footer */}
       <footer className="bg-gray-800 text-white text-center py-3 mt-auto">
         <p className="text-xs">&copy; 2025 SCCC Alibaba Cloud KSA - AI Pricing & Solution Advisor</p>
       </footer>
