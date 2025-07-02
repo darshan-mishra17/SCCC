@@ -9,6 +9,7 @@ const GROQ_API_KEY = process.env.GROQ_API_KEY;
 async function getGroqAIResponse(promptType, context) {
   // Use improved prompt builder for more accurate, structured output
   const prompt = buildPrompt(promptType, context);
+  console.log('[GROQ] Sending prompt to Groq API:', prompt);
   try {
     const response = await axios.post(
       GROQ_API_URL,
@@ -28,14 +29,17 @@ async function getGroqAIResponse(promptType, context) {
         timeout: 10000,
       }
     );
+    console.log('[GROQ] Raw response:', response.data);
     // Expect response.data.choices[0].message.content as JSON
     let data = response.data?.choices?.[0]?.message?.content;
     if (typeof data === 'string') {
       try { data = JSON.parse(data); } catch { throw new Error('Malformed JSON from Groq'); }
     }
     if (!data || typeof data !== 'object') throw new Error('No valid config in Groq response');
+    console.log('[GROQ] Parsed AI config:', data);
     return data;
   } catch (err) {
+    console.error('[GROQ] Error from Groq API:', err);
     // Retry once if malformed
     if (!err._retried) {
       err._retried = true;

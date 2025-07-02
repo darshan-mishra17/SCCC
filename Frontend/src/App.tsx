@@ -26,6 +26,7 @@ function App() {
     try {
       // 1. Get AI config from backend
       const aiConfig = await sendUserPrompt('recommendation', input);
+      console.log('AI Config received:', aiConfig);
       setMessages((prev) => [
         ...prev,
         { role: 'ai', content: 'Here is the recommended configuration:' },
@@ -33,12 +34,14 @@ function App() {
       setSuggestedSolution(aiConfig);
       // 2. Get pricing from backend
       const price = await calculatePricing(aiConfig);
+      console.log('Pricing received:', price);
       setPricing(price);
     } catch (e) {
       setMessages((prev) => [
         ...prev,
         { role: 'ai', content: 'Error: Unable to get AI recommendation or pricing.' },
       ]);
+      console.error('Error in handleSend:', e);
     }
     setLoading(false);
   };
@@ -140,11 +143,11 @@ function App() {
               <div className="mb-4">
                 <div className="flex justify-between text-sm text-gray-600 mb-1">
                   <span>Subtotal:</span>
-                  <span className="font-semibold">SAR {pricing?.subtotalSAR?.toFixed(2) ?? '0.00'}</span>
+                  <span className="font-semibold">SAR {pricing?.subtotal?.toFixed(2) ?? '0.00'}</span>
                 </div>
                 <div className="flex justify-between text-sm text-gray-600 mb-2">
                   <span>VAT (15%):</span>
-                  <span className="font-semibold">SAR {pricing?.vatSAR?.toFixed(2) ?? '0.00'}</span>
+                  <span className="font-semibold">SAR {pricing?.vat?.toFixed(2) ?? '0.00'}</span>
                 </div>
                 <hr className="my-2 border-gray-200" />
                 <div className="flex justify-between text-lg font-bold text-[#FF6A00]">

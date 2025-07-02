@@ -12,17 +12,21 @@ const USD_TO_SAR = 3.75;
 const VAT_RATE = 0.15;
 
 function calculatePricing(config) {
+  console.log('[PRICING] Received config:', JSON.stringify(config, null, 2));
   let subtotalUSD = 0;
   // ECS
   if (config.ecs) {
+    console.log('[PRICING] ECS config:', config.ecs);
     subtotalUSD += (BASE_PRICES.ecs * HOURS_PER_MONTH * (config.ecs.count || 1));
   }
   // OSS
   if (config.oss) {
+    console.log('[PRICING] OSS config:', config.oss);
     subtotalUSD += (BASE_PRICES.oss * (config.oss.storageGB || 0));
   }
   // TDSQL
   if (config.tdsql) {
+    console.log('[PRICING] TDSQL config:', config.tdsql);
     subtotalUSD += (BASE_PRICES.tdsql * (config.tdsql.nodes || 1));
   }
   // Add: handle generic service keys for more flexible AI output
@@ -30,12 +34,15 @@ function calculatePricing(config) {
     if (key === 'ecs' || key === 'oss' || key === 'tdsql') continue;
     if (value && typeof value === 'object') {
       if (value.instanceType && value.count) {
+        console.log(`[PRICING] Generic ECS-like config for key ${key}:`, value);
         subtotalUSD += (BASE_PRICES.ecs * HOURS_PER_MONTH * value.count);
       }
       if (value.storageGB) {
+        console.log(`[PRICING] Generic OSS-like config for key ${key}:`, value);
         subtotalUSD += (BASE_PRICES.oss * value.storageGB);
       }
       if (value.nodes) {
+        console.log(`[PRICING] Generic TDSQL-like config for key ${key}:`, value);
         subtotalUSD += (BASE_PRICES.tdsql * value.nodes);
       }
     }
@@ -47,6 +54,7 @@ function calculatePricing(config) {
   // VAT
   let vat = subtotalSAR * VAT_RATE;
   let total = subtotalSAR + vat;
+  console.log('[PRICING] Calculated:', { subtotalUSD, subtotalSAR, vat, total });
   return {
     subtotal: +subtotalSAR.toFixed(2),
     vat: +vat.toFixed(2),

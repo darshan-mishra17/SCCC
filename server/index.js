@@ -1,4 +1,5 @@
 require('dotenv').config();
+console.log('Loaded GROQ_API_KEY:', process.env.GROQ_API_KEY);
 const express = require('express');
 const cors = require('cors');
 const aiRouter = require('./routes/ai');
