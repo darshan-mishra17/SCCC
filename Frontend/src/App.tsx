@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from 'react';
-import { sendUserPrompt, calculatePricing } from './api';
+import { sendUserPrompt } from './api';
 
 type Message = { role: 'user' | 'ai'; content: string };
 
@@ -19,75 +19,34 @@ function App() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
-
   const handleSend = async () => {
     if (!input.trim()) return;
     setMessages((prev) => [...prev, { role: 'user', content: input }]);
     setInput('');
     setLoading(true);
-    
     try {
-      // Simulate AI response flow from the screenshot
-      setTimeout(() => {
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: 'ai',
-            content: "Understood. To clarify for the e-commerce backend: <br>1. What is the estimated number of SKUs in their product catalog? <br>2. What is the anticipated peak order volume per hour? <br>3. Are there specific database preferences (e.g., MySQL, PostgreSQL)? <br>4. Do they require PCI-DSS compliance for payments?"
-          },
-        ]);
-        
-        // After another short delay, show the recommendation
-        setTimeout(() => {
-          setMessages((prev) => [
-            ...prev,
-            {
-              role: 'ai',
-              content: "Thank you. Based on this, I recommend the following initial SCCC services. I'll add them to the solution panel with typical configurations. We can refine them. The estimated monthly cost for this initial setup will be calculated shortly. Would you like to review the configurations?"
-            }
-          ]);
-          
-          // Set the suggested solution matching the screenshot
-          setSuggestedSolution([
-            {
-              name: "Elastic Compute Service (ECS)",
-              config: "ecs.glange.Link, 4008 System, 100GB Data",
-              monthlyCost: 150
-            },
-            {
-              name: "Relational Database Service (RDS)",
-              config: "MySQL,rds.mysql.s2.medium, 500B Storage",
-              monthlyCost: 120
-            },
-            {
-              name: "Server Load Balancer (SLB)",
-              config: "Application LB, 10 LCUs",
-              monthlyCost: 75
-            },
-            {
-              name: "Web Application Firewall (WAF)",
-              config: "Pro Edition, 1 Domain",
-              monthlyCost: 160
-            }
-          ]);
-          
-          // Set pricing to match screenshot
-          setPricing({
-            subtotal: 530,
-            vat: 79.5,
-            totalMonthlySAR: 609.5
-          });
-          
-          setLoading(false);
-        }, 1000);
-      }, 1000);
+      // 1. Get AI config and solution from backend
+      const aiResponse = await sendUserPrompt('recommendation', input);
+      // aiResponse should contain: { message: string, solution: Array<{name, config, monthlyCost}>, ... }
+      setMessages((prev) => [
+        ...prev,
+        { role: 'ai', content: aiResponse.message || 'Here is the recommended configuration:' },
+      ]);
+      setSuggestedSolution(Array.isArray(aiResponse.solution) ? aiResponse.solution : []);
+      // 2. Get pricing from backend
+      // Calculate subtotal, vat, and total directly from the solution array's monthlyCost
+      const validServices = Array.isArray(aiResponse.solution) ? aiResponse.solution.filter((s: { monthlyCost: number }) => typeof s.monthlyCost === 'number') : [];
+      const subtotal = validServices.reduce((sum: number, s: { monthlyCost: number }) => sum + s.monthlyCost, 0);
+      const vat = subtotal * 0.15;
+      const totalMonthlySAR = subtotal + vat;
+      setPricing({ subtotal, vat, totalMonthlySAR });
     } catch (e) {
       setMessages((prev) => [
         ...prev,
         { role: 'ai', content: 'Error: Unable to get AI recommendation or pricing.' },
       ]);
-      setLoading(false);
     }
+    setLoading(false);
   };
 
   const handleAccept = () => {
@@ -175,14 +134,14 @@ function App() {
               <h2 className="text-lg font-semibold text-gray-700">AI Suggested Solution & Estimate</h2>
             </div>
             <div className="flex-grow p-4 space-y-3 overflow-y-auto">
-              {suggestedSolution.length === 0 ? (
+              {(!suggestedSolution || suggestedSolution.length === 0) ? (
                 <p className="text-gray-500 text-sm">The AI will suggest services and configurations here based on your conversation.</p>
               ) : (
                 suggestedSolution.map((service, idx) => (
                   <div key={idx} className="bg-white border border-[#E0E0E0] rounded-lg p-4 mb-3">
                     <h4 className="font-semibold text-gray-700">{service.name}</h4>
                     <p className="text-xs text-gray-500 mb-1">{service.config}</p>
-                    <p className="text-sm font-semibold text-[#FF6A00]">Est. SAR {service.monthlyCost.toFixed(2)}/month</p>
+                    <p className="text-sm font-semibold text-[#FF6A00]">Est. SAR {service.monthlyCost ? service.monthlyCost.toFixed(2) : '--'}/month</p>
                   </div>
                 ))
               )}
@@ -191,16 +150,16 @@ function App() {
               <div className="mb-4">
                 <div className="flex justify-between text-sm text-gray-600 mb-1">
                   <span>Subtotal:</span>
-                  <span className="font-semibold">SAR {pricing?.subtotal?.toFixed(2) || '530.00'}</span>
+                  <span className="font-semibold">SAR {pricing?.subtotal?.toFixed(2) ?? '--'}</span>
                 </div>
                 <div className="flex justify-between text-sm text-gray-600 mb-2">
                   <span>VAT (15%):</span>
-                  <span className="font-semibold">SAR {pricing?.vat?.toFixed(2) || '79.50'}</span>
+                  <span className="font-semibold">SAR {pricing?.vat?.toFixed(2) ?? '--'}</span>
                 </div>
                 <hr className="my-2 border-gray-200" />
                 <div className="flex justify-between text-lg font-bold text-[#FF6A00]">
                   <span>Total Estimated Monthly Cost:</span>
-                  <span>SAR {pricing?.totalMonthlySAR?.toFixed(2) || '609.50'}</span>
+                  <span>SAR {pricing?.totalMonthlySAR?.toFixed(2) ?? '--'}</span>
                 </div>
               </div>
               <div className="flex flex-wrap gap-2 justify-end">
