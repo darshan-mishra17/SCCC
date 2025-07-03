@@ -1,22 +1,21 @@
 // logic/groq.js
-const { buildPrompt } = require('./promptBuilder');
 const axios = require('axios');
 require('dotenv').config();
+const { buildPrompt } = require('./promptBuilder');
 
-const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const GROQ_API_URL = process.env.GROQ_API_URL || 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
 async function getGroqAIResponse(promptType, context) {
-  // Use improved prompt builder for more accurate, structured output
+  // Use improved prompt builder
   const prompt = buildPrompt(promptType, context);
-  console.log('[GROQ] Sending prompt to Groq API:', prompt);
   try {
     const response = await axios.post(
       GROQ_API_URL,
       {
         model: 'llama3-70b-8192',
         messages: [
-          { role: 'system', content: 'You are an expert cloud solution advisor. Always respond in JSON. Only output the JSON, no explanation.' },
+          { role: 'system', content: 'You are an expert cloud solution advisor. Always respond in JSON.' },
           { role: 'user', content: prompt }
         ],
         temperature: 0.2
@@ -29,23 +28,35 @@ async function getGroqAIResponse(promptType, context) {
         timeout: 10000,
       }
     );
-    console.log('[GROQ] Raw response:', response.data);
-    // Expect response.data.choices[0].message.content as JSON
+    // Log raw response for debugging
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[GROQ RAW RESPONSE]', JSON.stringify(response.data, null, 2));
+    }
     let data = response.data?.choices?.[0]?.message?.content;
     if (typeof data === 'string') {
-      try { data = JSON.parse(data); } catch { throw new Error('Malformed JSON from Groq'); }
+      // Try to extract JSON if extra text is present
+      const jsonMatch = data.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          data = JSON.parse(jsonMatch[0]);
+        } catch (e) {
+          throw new Error('Malformed JSON from Groq: ' + e.message + '\nRaw: ' + data);
+        }
+      } else {
+        throw new Error('Malformed JSON from Groq: No JSON object found. Raw: ' + data);
+      }
     }
     if (!data || typeof data !== 'object') throw new Error('No valid config in Groq response');
-    console.log('[GROQ] Parsed AI config:', data);
     return data;
   } catch (err) {
-    console.error('[GROQ] Error from Groq API:', err);
+    // Log full error for debugging
+    console.error('[GROQ ERROR]', err && (err.response?.data || err.stack || err));
     // Retry once if malformed
     if (!err._retried) {
       err._retried = true;
       return getGroqAIResponse(promptType, context);
     }
-    throw new Error('Groq API error: ' + err.message);
+    throw new Error('Groq API error: ' + (err.message || JSON.stringify(err)));
   }
 }
 

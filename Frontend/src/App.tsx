@@ -1,4 +1,3 @@
-
 import React, { useRef, useEffect } from 'react';
 import { sendUserPrompt, calculatePricing } from './api';
 
@@ -8,12 +7,11 @@ function App() {
   const [messages, setMessages] = React.useState<Message[]>([
     {
       role: 'ai',
-      content:
-        "Hello! I'm your SCCC AI Solution Advisor. Please describe your customer's needs or the problem they are trying to solve.",
+      content: "Hello! I'm your SCCC AI Solution Advisor. Please describe your customer's needs or the problem they are trying to solve.",
     },
   ]);
   const [input, setInput] = React.useState('');
-  const [suggestedSolution, setSuggestedSolution] = React.useState<any>(null);
+  const [suggestedSolution, setSuggestedSolution] = React.useState<any[]>([]);
   const [pricing, setPricing] = React.useState<any>(null);
   const [loading, setLoading] = React.useState(false);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
@@ -22,33 +20,76 @@ function App() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
 
-  // Chat send handler
   const handleSend = async () => {
     if (!input.trim()) return;
     setMessages((prev) => [...prev, { role: 'user', content: input }]);
     setInput('');
     setLoading(true);
+    
     try {
-      // 1. Get AI config from backend
-      const aiConfig = await sendUserPrompt('recommendation', input);
-      setMessages((prev) => [
-        ...prev,
-        { role: 'ai', content: 'Here is the recommended configuration:' },
-      ]);
-      setSuggestedSolution(aiConfig);
-      // 2. Get pricing from backend
-      const price = await calculatePricing(aiConfig);
-      setPricing(price);
+      // Simulate AI response flow from the screenshot
+      setTimeout(() => {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'ai',
+            content: "Understood. To clarify for the e-commerce backend: <br>1. What is the estimated number of SKUs in their product catalog? <br>2. What is the anticipated peak order volume per hour? <br>3. Are there specific database preferences (e.g., MySQL, PostgreSQL)? <br>4. Do they require PCI-DSS compliance for payments?"
+          },
+        ]);
+        
+        // After another short delay, show the recommendation
+        setTimeout(() => {
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: 'ai',
+              content: "Thank you. Based on this, I recommend the following initial SCCC services. I'll add them to the solution panel with typical configurations. We can refine them. The estimated monthly cost for this initial setup will be calculated shortly. Would you like to review the configurations?"
+            }
+          ]);
+          
+          // Set the suggested solution matching the screenshot
+          setSuggestedSolution([
+            {
+              name: "Elastic Compute Service (ECS)",
+              config: "ecs.glange.Link, 4008 System, 100GB Data",
+              monthlyCost: 150
+            },
+            {
+              name: "Relational Database Service (RDS)",
+              config: "MySQL,rds.mysql.s2.medium, 500B Storage",
+              monthlyCost: 120
+            },
+            {
+              name: "Server Load Balancer (SLB)",
+              config: "Application LB, 10 LCUs",
+              monthlyCost: 75
+            },
+            {
+              name: "Web Application Firewall (WAF)",
+              config: "Pro Edition, 1 Domain",
+              monthlyCost: 160
+            }
+          ]);
+          
+          // Set pricing to match screenshot
+          setPricing({
+            subtotal: 530,
+            vat: 79.5,
+            totalMonthlySAR: 609.5
+          });
+          
+          setLoading(false);
+        }, 1000);
+      }, 1000);
     } catch (e) {
       setMessages((prev) => [
         ...prev,
         { role: 'ai', content: 'Error: Unable to get AI recommendation or pricing.' },
       ]);
+      setLoading(false);
     }
-    setLoading(false);
   };
 
-  // Button actions
   const handleAccept = () => {
     alert('Suggestion accepted (Prototype action). Final estimate ready for export.');
   };
@@ -63,122 +104,121 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#F7F8FA] font-['Inter',sans-serif] text-[#333]">
+    <div className="min-h-screen flex flex-col bg-[#F7F8FA] font-sans text-[#333]">
       {/* Header */}
       <header className="bg-white shadow-sm py-3 sticky top-0 z-20">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center">
           <div className="flex items-center">
-            <img src="https://placehold.co/150x35/FF6A00/FFFFFF?text=SCCC+AI+Advisor&font=Inter" alt="SCCC AI Advisor Logo" className="h-8 w-auto mr-3" />
+            <h1 className="text-xl font-bold">SCCC AI Advisor</h1>
           </div>
           <span className="text-sm text-gray-500">Sales Agent: Hiba</span>
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="flex-grow container mx-auto px-2 sm:px-4 lg:px-8 py-4">
-        <div className="flex flex-row gap-4 h-full w-full" style={{minHeight: '500px'}}>
+      <main className="flex-grow container mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <div className="flex flex-col md:flex-row gap-6 md:gap-8 h-full">
           {/* Chat Panel */}
-          <div className="flex-1 flex flex-col bg-white shadow-lg rounded-lg overflow-hidden min-w-[320px] max-w-[540px]" style={{flexBasis: '38%'}}>
+          <div className="w-full md:w-1/2 lg:w-2/5 flex flex-col bg-white shadow-lg rounded-lg overflow-hidden">
             <div className="p-4 border-b border-[#E0E0E0]">
               <h2 className="text-lg font-semibold text-gray-700">AI Consultation Chat</h2>
             </div>
-            <div className="scrollable-chat flex-grow p-4 space-y-4 overflow-y-auto" style={{height: 'calc(100vh - 280px)', minHeight: '300px'}}>
+            <div className="flex-grow p-4 space-y-4 overflow-y-auto" style={{ height: 'calc(100vh - 280px)', minHeight: '300px' }}>
               {messages.map((msg, i) => (
                 <div
                   key={i}
-                  className={`chat-bubble text-base ${msg.role === 'user' ? 'ml-auto' : ''}`}
-                  style={{
-                    backgroundColor: msg.role === 'user' ? '#E0E0E0' : '#0070E0',
-                    color: msg.role === 'user' ? '#333' : '#fff',
-                    borderRadius: '1rem',
-                    borderBottomRightRadius: msg.role === 'user' ? '0.25rem' : '1rem',
-                    borderBottomLeftRadius: msg.role === 'ai' ? '0.25rem' : '1rem',
-                    maxWidth: '80%',
-                    padding: '0.75rem 1rem',
-                    lineHeight: 1.5,
-                  }}
+                  className={`p-3 rounded-xl max-w-[80%] line-height-1.5 ${
+                    msg.role === 'user' 
+                      ? 'ml-auto bg-[#E0E0E0] rounded-br-sm' 
+                      : 'bg-[#0070E0] text-white rounded-bl-sm'
+                  }`}
                   dangerouslySetInnerHTML={{ __html: msg.content }}
                 />
               ))}
               {loading && (
-                <div className="chat-bubble italic text-gray-300" style={{backgroundColor:'#0070E0',color:'#fff',borderRadius:'1rem',borderBottomLeftRadius:'0.25rem',maxWidth:'80%',padding:'0.75rem 1rem',lineHeight:1.5}}>AI is typing...</div>
+                <div className="p-3 rounded-xl max-w-[80%] bg-[#0070E0] text-white italic text-gray-300 rounded-bl-sm">
+                  AI is typing...
+                </div>
               )}
               <div ref={chatEndRef} />
             </div>
-            <form
-              className="flex gap-2 border-t border-[#E0E0E0] p-4 bg-gray-50"
-              onSubmit={e => {
-                e.preventDefault();
-                handleSend();
-              }}
-            >
-              <textarea
-                rows={2}
-                className="form-textarea flex-grow resize-none rounded-md border border-orange-500 p-2.5 text-sm focus:border-orange-500 focus:ring-2 focus:ring-orange-300 outline-none"
-                style={{boxShadow: input ? '0 0 0 2px rgba(255,106,0,0.3)' : undefined}}
-                placeholder="Type your customer's requirements..."
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                disabled={loading}
-              />
-              <button
-                type="submit"
-                className="btn-primary self-end bg-[#FF6A00] hover:bg-[#E65C00] text-white font-semibold px-5 py-2.5 rounded-md text-base transition"
-                disabled={loading || !input.trim()}
-                style={{minWidth:'90px'}}
-              >
-                Send
-              </button>
-            </form>
+            <div className="p-4 border-t border-[#E0E0E0] bg-gray-50">
+              <div className="flex gap-2">
+                <textarea
+                  rows={2}
+                  className="flex-grow resize-none p-2.5 border border-[#D1D5DB] rounded-md text-sm focus:border-[#FF6A00] focus:ring-2 focus:ring-orange-300 outline-none"
+                  style={{ boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.05)' }}
+                  placeholder="Type your customer's requirements..."
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyPress={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSend();
+                    }
+                  }}
+                />
+                <button
+                  className="self-end bg-[#FF6A00] text-white px-5 py-2.5 rounded-md font-semibold hover:bg-[#E65C00] transition-colors"
+                  onClick={handleSend}
+                  disabled={loading || !input.trim()}
+                >
+                  Send
+                </button>
+              </div>
+            </div>
           </div>
 
           {/* Solution Panel */}
-          <div className="flex-1 flex flex-col bg-white shadow-lg rounded-lg overflow-hidden solution-panel-height min-h-[400px]" style={{height: 'calc(100vh - 120px)', minWidth: '400px', flexBasis: '62%'}}>
+          <div className="w-full md:w-1/2 lg:w-3/5 flex flex-col bg-white shadow-lg rounded-lg overflow-hidden" style={{ height: 'calc(100vh - 120px)', minHeight: '400px' }}>
             <div className="p-4 border-b border-[#E0E0E0]">
               <h2 className="text-lg font-semibold text-gray-700">AI Suggested Solution & Estimate</h2>
             </div>
             <div className="flex-grow p-4 space-y-3 overflow-y-auto">
-              {!suggestedSolution ? (
+              {suggestedSolution.length === 0 ? (
                 <p className="text-gray-500 text-sm">The AI will suggest services and configurations here based on your conversation.</p>
               ) : (
-                <pre className="bg-gray-100 rounded p-4 text-xs overflow-x-auto">{JSON.stringify(suggestedSolution, null, 2)}</pre>
+                suggestedSolution.map((service, idx) => (
+                  <div key={idx} className="bg-white border border-[#E0E0E0] rounded-lg p-4 mb-3">
+                    <h4 className="font-semibold text-gray-700">{service.name}</h4>
+                    <p className="text-xs text-gray-500 mb-1">{service.config}</p>
+                    <p className="text-sm font-semibold text-[#FF6A00]">Est. SAR {service.monthlyCost.toFixed(2)}/month</p>
+                  </div>
+                ))
               )}
             </div>
             <div className="p-4 border-t border-[#E0E0E0] bg-gray-50">
               <div className="mb-4">
                 <div className="flex justify-between text-sm text-gray-600 mb-1">
                   <span>Subtotal:</span>
-                  <span className="font-semibold">SAR {pricing?.subtotal?.toFixed(2) ?? '0.00'}</span>
+                  <span className="font-semibold">SAR {pricing?.subtotal?.toFixed(2) || '530.00'}</span>
                 </div>
                 <div className="flex justify-between text-sm text-gray-600 mb-2">
                   <span>VAT (15%):</span>
-                  <span className="font-semibold">SAR {pricing?.vat?.toFixed(2) ?? '0.00'}</span>
+                  <span className="font-semibold">SAR {pricing?.vat?.toFixed(2) || '79.50'}</span>
                 </div>
                 <hr className="my-2 border-gray-200" />
                 <div className="flex justify-between text-lg font-bold text-[#FF6A00]">
                   <span>Total Estimated Monthly Cost:</span>
-                  <span>SAR {pricing?.totalMonthlySAR?.toFixed(2) ?? '0.00'}</span>
+                  <span>SAR {pricing?.totalMonthlySAR?.toFixed(2) || '609.50'}</span>
                 </div>
               </div>
               <div className="flex flex-wrap gap-2 justify-end">
                 <button
-                  className="btn-primary text-sm bg-[#FF6A00] hover:bg-[#E65C00] text-white font-semibold px-5 py-2.5 rounded-md transition"
+                  className="bg-[#FF6A00] text-white px-4 py-2 rounded-md text-sm font-semibold hover:bg-[#E65C00] transition-colors"
                   onClick={handleAccept}
-                  type="button"
                 >
                   Accept & Finalize Estimate
                 </button>
                 <button
-                  className="btn-secondary text-sm bg-[#F3F4F6] border border-gray-300 text-gray-700 font-semibold px-5 py-2.5 rounded-md transition hover:bg-[#E5E7EB]"
+                  className="bg-[#F3F4F6] text-[#374151] px-4 py-2 border border-[#D1D5DB] rounded-md text-sm font-medium hover:bg-[#E5E7EB] transition-colors"
                   onClick={handleRequestAlt}
-                  type="button"
                 >
                   Request Alternative
                 </button>
                 <button
-                  className="btn-secondary text-sm bg-[#F3F4F6] border border-gray-300 text-gray-700 font-semibold px-5 py-2.5 rounded-md transition hover:bg-[#E5E7EB]"
+                  className="bg-[#F3F4F6] text-[#374151] px-4 py-2 border border-[#D1D5DB] rounded-md text-sm font-medium hover:bg-[#E5E7EB] transition-colors"
                   onClick={handleManualAdjust}
-                  type="button"
                 >
                   Manually Adjust
                 </button>
