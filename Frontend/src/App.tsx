@@ -1,63 +1,26 @@
 import React, { useState } from 'react';
-import ChatPanel from './ChatPanel';
-import SolutionPanel from './SolutionPanel';
-import type { Message, ServiceSuggestion, CostSummary } from './types';
+import ChatBot from './components/chatBot';
+import ServiceSummary from './components/serviceSummary';
+
+type ServiceConfig = {
+  service: string;
+  [key: string]: any;
+};
+
+type Pricing = {
+  subtotalSAR: number;
+  vatSAR: number;
+  totalMonthlySAR: number;
+};
 
 const App: React.FC = () => {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      type: 'ai',
-      content: "Hello! I'm your SCCC AI Solution Advisor. Please describe your customer's needs or the problem they are trying to solve.",
-      timestamp: new Date().toISOString(),
-    },
-  ]);
-  const [loading, setLoading] = useState(false);
-  const [solution, setSolution] = useState<ServiceSuggestion[]>([]);
-  const [costSummary, setCostSummary] = useState<CostSummary>({ subtotal: 0, vat: 0, total: 0 });
+  const [serviceConfig, setServiceConfig] = useState<ServiceConfig | null>(null);
+  const [pricing, setPricing] = useState<Pricing | null>(null);
 
-  // Send user message to backend and handle AI response
-  const handleSend = async (userText: string) => {
-    const userMsg: Message = {
-      type: 'user',
-      content: userText,
-      timestamp: new Date().toISOString(),
-    };
-    setMessages((prev) => [...prev, userMsg]);
-    setLoading(true);
-    try {
-      const res = await fetch('http://localhost:4000/api/ai/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userMessage: userText }),
-      });
-      if (!res.ok) throw new Error('Server responded with ' + res.status);
-      const data = await res.json();
-      // Add AI message to chat
-      setMessages((prev) => [
-        ...prev,
-        {
-          type: 'ai',
-          content: 'Here is the suggested solution and estimate. You can request alternatives or adjust as needed.',
-          timestamp: new Date().toISOString(),
-        },
-      ]);
-      setSolution(data.solution || []);
-      // Calculate costs
-      const subtotal = data.solution.reduce((acc: number, s: ServiceSuggestion) => acc + (s.defaultEstimatedMonthlyCost || 0), 0);
-      const vat = subtotal * 0.15;
-      setCostSummary({ subtotal, vat, total: subtotal + vat });
-    } catch (err: any) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          type: 'ai',
-          content: 'AI API error: ' + err.message,
-          timestamp: new Date().toISOString(),
-        },
-      ]);
-    } finally {
-      setLoading(false);
-    }
+  // Handler to receive final config and pricing from ChatBot
+  const handleFinalConfig = (config: ServiceConfig, price: Pricing) => {
+    setServiceConfig(config);
+    setPricing(price);
   };
 
   return (
@@ -74,8 +37,18 @@ const App: React.FC = () => {
       {/* Main */}
       <main className="flex-grow container mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <div className="flex flex-col md:flex-row gap-6 md:gap-8 h-full">
-          <ChatPanel messages={messages} onSend={handleSend} loading={loading} />
-          <SolutionPanel solution={solution} costSummary={costSummary} />
+          <div className="w-full md:w-1/2 lg:w-2/5">
+            <ChatBot onFinalConfig={handleFinalConfig} />
+          </div>
+          <div className="w-full md:w-1/2 lg:w-3/5">
+            {serviceConfig && pricing ? (
+              <ServiceSummary serviceConfig={serviceConfig} pricing={pricing} />
+            ) : (
+              <div className="bg-white rounded-lg shadow p-6 max-w-md mx-auto flex items-center justify-center h-full text-gray-400 text-lg">
+                Service summary will appear here after configuration is complete.
+              </div>
+            )}
+          </div>
         </div>
       </main>
       {/* Footer */}

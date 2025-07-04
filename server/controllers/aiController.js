@@ -12,6 +12,8 @@ const analyzeServices = async (req, res) => {
   }
 
   try {
+    // --- DEBUG LOGGING: Log incoming user message ---
+    console.log('[AI DEBUG] userMessage:', userMessage);
     const services = await Service.find({});
     if (!services.length) {
       return res.status(404).json({ message: 'No services found in database' });
@@ -84,24 +86,41 @@ Now provide your answer in JSON only.
     );
 
     let rawReply = response.data.choices?.[0]?.message?.content || '';
+    // --- DEBUG LOGGING: Log raw AI response ---
+    console.log('[AI DEBUG] Raw AI response:', rawReply);
 
-    // Clean and extract JSON only
+    // Improved JSON extraction: find the first and last brackets
     const extractJSON = (text) => {
       let cleaned = text
         .replace(/<think>[\s\S]*?<\/think>/gi, '')
-        .replace(/<think\s*\/?>/gi, '')
+        .replace(/<think\s*\/?/gi, '')
         .replace(/```(json)?/gi, '')
         .replace(/```/g, '')
         .trim();
-
-      const match = cleaned.match(/\[\s*{[\s\S]*?}\s*\]/);
-      return match ? match[0] : null;
+      // Find the first [ and last ]
+      const firstBracket = cleaned.indexOf('[');
+      const lastBracket = cleaned.lastIndexOf(']');
+      if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
+        return cleaned.substring(firstBracket, lastBracket + 1);
+      }
+      // Fallback: try to extract the first {...} object and wrap in array
+      const objMatch = cleaned.match(/\{[\s\S]*?\}/);
+      if (objMatch) {
+        return `[${objMatch[0]}]`;
+      }
+      return null;
     };
 
     const extracted = extractJSON(rawReply);
+    // --- DEBUG LOGGING: Log extracted JSON string ---
+    console.log('[AI DEBUG] Extracted JSON string:', extracted);
 
     if (!extracted) {
-      throw new Error('Could not extract valid JSON array');
+      console.error('[AI JSON EXTRACT ERROR] Could not extract valid JSON array. Raw reply:', rawReply);
+      return res.status(500).json({
+        message: 'AI response could not be extracted as JSON',
+        rawReply,
+      });
     }
 
     let parsedResult;
@@ -110,12 +129,23 @@ Now provide your answer in JSON only.
       const cleanedExtracted = cleanJsonString(extracted);
       parsedResult = JSON.parse(cleanedExtracted);
     } catch (parseErr) {
+      // --- DEBUG LOGGING: Log parse error and try jsonrepair ---
       console.error('[AI JSON PARSE ERROR]', parseErr, '\nExtracted JSON string:', extracted);
-      return res.status(500).json({
-        message: 'AI response could not be parsed as JSON',
-        extracted,
-        error: parseErr.message,
-      });
+      // Try to repair JSON using jsonrepair
+      try {
+        const { repairJsonString } = require('./jsonRepair');
+        const repaired = repairJsonString(extracted);
+        console.log('[AI DEBUG] Attempting jsonrepair. Repaired string:', repaired);
+        parsedResult = JSON.parse(repaired);
+      } catch (repairErr) {
+        console.error('[AI JSONREPAIR ERROR]', repairErr);
+        return res.status(500).json({
+          message: 'AI response could not be parsed or repaired as JSON',
+          extracted,
+          error: parseErr.message,
+          repairError: repairErr.message,
+        });
+      }
     }
 
     // Apply detailed pricing logic to each service

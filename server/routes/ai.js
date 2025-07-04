@@ -89,11 +89,85 @@
 // module.exports = router;
 // routes/ai.js
 // routes/ai.js
+
 const express = require('express');
 const router = express.Router();
-const { analyzeServices } = require('../controllers/aiController');
+const { extractFieldValue } = require('../services/groqService');
+const { initializeState, updateState, getNextMissingField, isStateComplete } = require('../services/StateManager');
+const { buildPromptForField } = require('../services/PromptBuilder');
+// For demo: use in-memory state. Replace with DB for production.
+const sessionStates = {};
 
-// POST /api/ai/analyze
-router.post('/analyze', analyzeServices);
+// POST /api/ai/message
+router.post('/message', async (req, res) => {
+  const { sessionId, userMessage } = req.body;
+  if (!sessionId || !userMessage) {
+    return res.status(400).json({ error: 'Missing sessionId or userMessage' });
+  }
+
+  // Load or create state
+  let state = sessionStates[sessionId];
+  if (!state) {
+    // Try to detect service from userMessage (simple keyword match)
+    let service = null;
+    if (/ecs/i.test(userMessage)) service = 'ECS';
+    else if (/oss/i.test(userMessage)) service = 'OSS';
+    else if (/tdsql/i.test(userMessage)) service = 'TDSQL';
+    if (!service) {
+      return res.json({ message: 'Which service would you like to configure? (ECS, OSS, TDSQL)' });
+    }
+    state = initializeState(service);
+    sessionStates[sessionId] = state;
+  }
+
+  // If state is already complete, just return summary
+  if (isStateComplete(state)) {
+    return respondWithSummary(state, res);
+  }
+
+  // Find next missing field
+  const nextField = getNextMissingField(state);
+  if (!nextField) {
+    return respondWithSummary(state, res);
+  }
+
+  // Use Groq to extract value for the next field
+  let extractedValue = null;
+  try {
+    extractedValue = await extractFieldValue(userMessage, nextField);
+    if (extractedValue) {
+      state[nextField] = extractedValue;
+      state.isComplete = isStateComplete(state);
+    }
+  } catch (e) {
+    return res.status(500).json({ error: 'AI extraction failed', details: e.message });
+  }
+
+  // If still incomplete, ask next question
+  if (!state.isComplete) {
+    const nextMissing = getNextMissingField(state);
+    const prompt = buildPromptForField(nextMissing, state);
+    return res.json({ message: prompt, state });
+  }
+
+  // If complete, return summary
+  return respondWithSummary(state, res);
+});
+
+
+// Helper: respond with config and price summary (uses real pricingEngine)
+function respondWithSummary(state, res) {
+  try {
+    const { calculatePrice } = require('../services/pricingEngine');
+    const price = calculatePrice(state);
+    return res.json({
+      message: `Configuration complete for ${state.service}. Monthly cost: SAR ${price.totalMonthlySAR}`,
+      config: state,
+      price
+    });
+  } catch (e) {
+    return res.status(500).json({ error: 'Pricing calculation failed', details: e.message });
+  }
+}
 
 module.exports = router;
