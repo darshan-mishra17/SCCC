@@ -1,18 +1,21 @@
-require('dotenv').config();
-console.log('Loaded GROQ_API_KEY:', process.env.GROQ_API_KEY);
 const express = require('express');
 const cors = require('cors');
+require('dotenv').config();
+
+const connectDB = require('./db');
 const aiRouter = require('./routes/ai');
-const pricingRouter = require('./routes/pricing');
+const serviceRouter = require('./routes/services'); // ✅ Import your service routes
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 app.use('/api/ai', aiRouter);
-app.use('/api/pricing', pricingRouter);
+app.use('/api/services', serviceRouter); // ✅ Mount the router here
 
-const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
-  console.log(`SCCC Pricing Advisor API running on port ${PORT}`);
+connectDB().then(() => {
+  const PORT =  4000;
+  app.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+  });
 });

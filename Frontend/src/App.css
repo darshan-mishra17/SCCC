@@ -1,42 +1,61 @@
-#root {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
+.ai-chat-container {
+  display: flex;
+  gap: 20px;
+  padding: 20px;
+  font-family: sans-serif;
 }
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
-}
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafbaa);
+.chat-panel,
+.suggestion-panel {
+  flex: 1;
+  border: 1px solid #ccc;
+  border-radius: 10px;
+  padding: 20px;
+  min-height: 400px;
 }
 
-@keyframes logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+.chat-history {
+  margin-bottom: 20px;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  a:nth-of-type(2) .logo {
-    animation: logo-spin infinite 20s linear;
-  }
+.agent-msg,
+.user-msg {
+  background-color: #f2f2f2;
+  padding: 10px;
+  margin-bottom: 8px;
+  border-radius: 5px;
+}
+
+.chat-input {
+  display: flex;
+  gap: 10px;
+}
+
+.chat-input input {
+  flex: 1;
+  padding: 8px;
 }
 
 .card {
-  padding: 2em;
+  border: 1px solid #ddd;
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 10px;
+  background-color: #f9f9f9;
 }
 
-.read-the-docs {
-  color: #888;
+.total-section {
+  margin-top: 20px;
+  border-top: 1px solid #ccc;
+  padding-top: 10px;
+}
+
+.primary-btn {
+  margin-top: 10px;
+  padding: 10px 20px;
+  background-color: #2a72f9;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
 }
