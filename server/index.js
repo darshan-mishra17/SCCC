@@ -19,3 +19,9 @@ connectDB().then(() => {
     console.log(`🚀 Server running on port ${PORT}`);
   });
 });
+
+// Global error handler for logging and returning errors
+app.use((err, req, res, next) => {
+  console.error('[GLOBAL ERROR]', err);
+  res.status(500).json({ message: 'Internal Server Error', error: err.message });
+});

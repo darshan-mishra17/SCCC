@@ -1,13 +1,30 @@
-export type ChatMessage = { sender: 'user' | 'ai'; text: string };
-export type AIConfig = {
+
+export type Message = {
+  type: 'user' | 'ai';
+  content: string;
+  timestamp: string;
+};
+
+export type ServiceSuggestion = {
   service: string;
+  quantity: number;
   instanceType: string;
-  systemDisk: object;
+  operatingSystem: string;
+  systemDisk: {
+    sizeGB: number;
+    category: string;
+  };
+  additionalDataDisks: Array<{
+    sizeGB: number;
+    category: string;
+  }>;
   bandwidthMbps: number;
   pricingModel: string;
+  defaultEstimatedMonthlyCost: number;
 };
-export type PricingResult = {
-  subtotalSAR: number;
-  vatSAR: number;
-  totalMonthlySAR: number;
+
+export type CostSummary = {
+  subtotal: number;
+  vat: number;
+  total: number;
 };

@@ -1,94 +1,87 @@
 import React, { useState } from 'react';
-import './App.css'; // Optional CSS
-import axios from 'axios';
+import ChatPanel from './ChatPanel';
+import SolutionPanel from './SolutionPanel';
+import type { Message, ServiceSuggestion, CostSummary } from './types';
 
-const App = () => {
-  const [userMessage, setUserMessage] = useState('');
-  const [aiResponse, setAiResponse] = useState([]);
+const App: React.FC = () => {
+  const [messages, setMessages] = useState<Message[]>([
+    {
+      type: 'ai',
+      content: "Hello! I'm your SCCC AI Solution Advisor. Please describe your customer's needs or the problem they are trying to solve.",
+      timestamp: new Date().toISOString(),
+    },
+  ]);
   const [loading, setLoading] = useState(false);
+  const [solution, setSolution] = useState<ServiceSuggestion[]>([]);
+  const [costSummary, setCostSummary] = useState<CostSummary>({ subtotal: 0, vat: 0, total: 0 });
 
-  const handleSend = async () => {
+  // Send user message to backend and handle AI response
+  const handleSend = async (userText: string) => {
+    const userMsg: Message = {
+      type: 'user',
+      content: userText,
+      timestamp: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, userMsg]);
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:4000/api/ai/analyze', {
+      const res = await fetch('http://localhost:4000/api/ai/analyze', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ userMessage }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userMessage: userText }),
       });
-
-      if (!response.ok) {
-        throw new Error(`Server responded with ${response.status}`);
-      }
-
-      const result = await response.json();
-      console.log('✅ AI Response:', result);
-      setAiResponse(result.solution || []);
-    } catch (err) {
-      console.error('AI API error:', err);
+      if (!res.ok) throw new Error('Server responded with ' + res.status);
+      const data = await res.json();
+      // Add AI message to chat
+      setMessages((prev) => [
+        ...prev,
+        {
+          type: 'ai',
+          content: 'Here is the suggested solution and estimate. You can request alternatives or adjust as needed.',
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+      setSolution(data.solution || []);
+      // Calculate costs
+      const subtotal = data.solution.reduce((acc: number, s: ServiceSuggestion) => acc + (s.defaultEstimatedMonthlyCost || 0), 0);
+      const vat = subtotal * 0.15;
+      setCostSummary({ subtotal, vat, total: subtotal + vat });
+    } catch (err: any) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          type: 'ai',
+          content: 'AI API error: ' + err.message,
+          timestamp: new Date().toISOString(),
+        },
+      ]);
     } finally {
       setLoading(false);
     }
   };
 
-  // Cost Calculations
-  const subtotal = aiResponse.reduce(
-    (sum, item) => sum + (item.defaultEstimatedMonthlyCost || 0),
-    0
-  );
-  const vat = subtotal * 0.15;
-  const total = subtotal + vat;
-
   return (
-    <div className="ai-chat-container">
-      {/* LEFT PANEL */}
-      <div className="chat-panel">
-        <div className="chat-history">
-          <div className="agent-msg">
-            <p>What is the estimated number of SKUs in their product catalog?...</p>
+    <div className="min-h-screen flex flex-col bg-[#F7F8FA] font-inter">
+      {/* Header */}
+      <header className="bg-white shadow-sm py-3 sticky top-0 z-20">
+        <div className="container mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center">
+          <div className="flex items-center">
+            <img src="https://placehold.co/150x35/FF6A00/FFFFFF?text=SCCC+AI+Advisor&font=Inter" alt="SCCC AI Advisor Logo" className="h-8 mr-3" />
           </div>
-          <div className="user-msg">
-            <p>{userMessage}</p>
-          </div>
+          <span className="text-sm text-gray-500">Sales Agent: Hiba</span>
         </div>
-        <div className="chat-input">
-          <input
-            type="text"
-            placeholder="Type your customer's requirements..."
-            value={userMessage}
-            onChange={(e) => setUserMessage(e.target.value)}
-          />
-          <button onClick={handleSend} disabled={loading}>
-            {loading ? 'Sending...' : 'Send'}
-          </button>
+      </header>
+      {/* Main */}
+      <main className="flex-grow container mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <div className="flex flex-col md:flex-row gap-6 md:gap-8 h-full">
+          <ChatPanel messages={messages} onSend={handleSend} loading={loading} />
+          <SolutionPanel solution={solution} costSummary={costSummary} />
         </div>
-      </div>
-
-      {/* RIGHT PANEL */}
-      <div className="suggestion-panel">
-        <h3>AI Suggested Solution & Estimate</h3>
-        {aiResponse.map((item, index) => (
-          <div className="card" key={index}>
-            <strong>{item.service || item.instance}</strong>
-            <p>{item.instanceType && `Type: ${item.instanceType}`}</p>
-            <p>{item.quantity && `Qty: ${item.quantity}`}</p>
-            <p>
-              Est. SAR {(item.defaultEstimatedMonthlyCost || 0).toFixed(2)} / month
-            </p>
-          </div>
-        ))}
-
-        {/* COST SUMMARY */}
-        {aiResponse.length > 0 && (
-          <div className="total-section">
-            <p>Subtotal: SAR {subtotal.toFixed(2)}</p>
-            <p>VAT (15%): SAR {vat.toFixed(2)}</p>
-            <strong>Total Monthly Cost: SAR {total.toFixed(2)}</strong>
-            <button className="primary-btn">Accept & Finalize Estimate</button>
-          </div>
-        )}
-      </div>
+      </main>
+      {/* Footer */}
+      <footer className="bg-gray-800 text-white text-center py-3 mt-auto">
+        <p className="text-xs">&copy; 2025 SCCC Alibaba Cloud KSA - AI Pricing & Solution Advisor</p>
+      </footer>
     </div>
   );
 };
