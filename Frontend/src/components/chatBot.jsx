@@ -39,7 +39,7 @@ const ChatBot = () => {
     try {
       const res = await axios.post('http://localhost:4000/api/ai/message', { 
         sessionId, 
-        message: userMsg 
+        userMessage: userMsg 
       }, {
         headers: {
           'Content-Type': 'application/json'
