@@ -1,117 +1,103 @@
 import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 import { v4 as uuidv4 } from 'uuid';
+import ChatMessage from './ChatMessage';
 
-interface ChatMessage {
+interface ChatMessageType {
   sender: 'user' | 'ai';
   text: string;
   timestamp?: Date;
 }
 
-const ChatBot = () => {
+interface ChatBotProps {
+  onFinalConfig?: (config: any, pricing: any) => void;
+}
+
+const ChatBot: React.FC<ChatBotProps> = ({ onFinalConfig }) => {
   const [sessionId] = useState(() => uuidv4());
-  const [chat, setChat] = useState<ChatMessage[]>([
-    { 
-      sender: 'ai', 
+  const [chat, setChat] = useState<ChatMessageType[]>([
+    {
+      sender: 'ai',
       text: 'Hello! I am your AI Pricing Advisor. Which service would you like to configure? (ECS, OSS, TDSQL)',
-      timestamp: new Date()
-    }
+      timestamp: new Date(),
+    },
   ]);
   const [userMessage, setUserMessage] = useState('');
   const [loading, setLoading] = useState(false);
+  // No summary state needed; summary is handled in parent
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom when chat updates
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chat]);
 
   const handleSend = async (e: React.FormEvent) => {
+    console.log('handleSend called');
     e.preventDefault();
     if (!userMessage.trim() || loading) return;
-    
+
     const userMsg = userMessage.trim();
-    const userMessageObj: ChatMessage = {
+    const userMessageObj: ChatMessageType = {
       sender: 'user',
       text: userMsg,
-      timestamp: new Date()
+      timestamp: new Date(),
     };
 
-    // Update UI immediately with user message
-    setChat(prev => [...prev, userMessageObj]);
+    setChat((prev) => [...prev, userMessageObj]);
     setUserMessage('');
     setLoading(true);
 
     try {
-      const res = await axios.post('http://localhost:4000/api/ai/message', { 
-        sessionId, 
-        userMessage: userMsg 
-      }, {
-        headers: {
-          'Content-Type': 'application/json'
+      const res = await axios.post(
+        'http://localhost:4000/api/ai/message',
+        {
+          sessionId,
+          userMessage: userMsg,
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+          },
         }
-      });
+      );
+      // DEBUG: Log backend response
+      console.log('[DEBUG] Backend response:', res.data);
 
-      if (res.data?.message) {
-        const aiMessageObj: ChatMessage = {
+      // Only add to chat if not a final configuration/summary
+      if (res.data?.services && res.data?.pricing) {
+        if (onFinalConfig) {
+          onFinalConfig(res.data.services, res.data.pricing);
+        }
+        // Do NOT add summary message to chat
+      } else if (res.data?.message) {
+        const aiMessageObj: ChatMessageType = {
           sender: 'ai',
           text: res.data.message,
-          timestamp: new Date()
+          timestamp: new Date(),
         };
-        setChat(prev => [...prev, aiMessageObj]);
-      }
-      // Show pricing summary if present
-      if (res.data?.pricing && res.data?.config) {
-        setSummary({ config: res.data.config, pricing: res.data.pricing });
+        setChat((prev) => [...prev, aiMessageObj]);
       }
     } catch (err) {
       console.error('API Error:', err);
-      const errorMessageObj: ChatMessage = {
+      const errorMessageObj: ChatMessageType = {
         sender: 'ai',
         text: 'Sorry, there was an error processing your request. Please try again.',
-        timestamp: new Date()
+        timestamp: new Date(),
       };
-      setChat(prev => [...prev, errorMessageObj]);
+      setChat((prev) => [...prev, errorMessageObj]);
     } finally {
       setLoading(false);
     }
   };
 
-  // Pricing summary state
-  const [summary, setSummary] = useState<{ config: any, pricing: any } | null>(null);
-
   return (
-    <div className="flex flex-col h-full bg-white rounded-lg shadow p-4">
-      <div className="flex-1 overflow-y-auto mb-2 space-y-2">
+    <div className="flex flex-col h-full bg-white rounded-lg shadow p-4 max-w-2xl mx-auto">
+      <div className="flex-1 overflow-y-auto mb-2 space-y-2 pb-2">
         {chat.map((msg, idx) => (
-          <div key={`${msg.timestamp?.getTime() || idx}`} 
-               className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-xs md:max-w-md px-4 py-2 rounded-lg text-sm whitespace-pre-line ${
-              msg.sender === 'user' 
-                ? 'bg-blue-500 text-white rounded-br-none' 
-                : 'bg-gray-200 text-gray-900 rounded-bl-none'
-            }`}>
-              {msg.text}
-              <div className="text-xs opacity-70 mt-1">
-                {msg.timestamp?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-              </div>
-            </div>
-          </div>
+          <ChatMessage key={idx} role={msg.sender} content={msg.text} />
         ))}
         <div ref={chatEndRef} />
-        {/* Pricing summary card */}
-        {summary && (
-          <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg">
-            <div className="font-semibold mb-2 text-green-800">Pricing Summary</div>
-            <div className="mb-2">
-              <span className="font-medium">Configuration:</span>
-              <pre className="bg-gray-100 rounded p-2 text-xs mt-1 overflow-x-auto">{JSON.stringify(summary.config, null, 2)}</pre>
-            </div>
-            <div className="mb-1"><span className="font-medium">Subtotal:</span> {summary.pricing.subtotalSAR} SAR</div>
-            <div className="mb-1"><span className="font-medium">VAT (15%):</span> {summary.pricing.vatSAR} SAR</div>
-            <div className="mb-1"><span className="font-medium">Total Monthly:</span> <span className="text-green-700 font-bold">{summary.pricing.totalMonthlySAR} SAR</span></div>
-          </div>
-        )}
+        {/* No summary here; summary is shown in the right panel only */}
       </div>
 
       <form onSubmit={handleSend} className="flex gap-2 mt-2">

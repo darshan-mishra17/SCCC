@@ -2,9 +2,10 @@ import React, { useState } from 'react';
 import ChatBot from './components/chatBot';
 import ServiceSummary from './components/serviceSummary';
 
-type ServiceConfig = {
-  service: string;
-  [key: string]: any;
+type Service = {
+  name: string;
+  config: Record<string, any>;
+  monthlyCost: number;
 };
 
 type Pricing = {
@@ -14,46 +15,47 @@ type Pricing = {
 };
 
 const App: React.FC = () => {
-  const [serviceConfig, setServiceConfig] = useState<ServiceConfig | null>(null);
+  const [services, setServices] = useState<Service[] | null>(null);
   const [pricing, setPricing] = useState<Pricing | null>(null);
 
   // Handler to receive final config and pricing from ChatBot
-  const handleFinalConfig = (config: ServiceConfig, price: Pricing) => {
-    setServiceConfig(config);
-    setPricing(price);
+  const handleFinalConfig = (services: Service[], pricing: Pricing) => {
+    console.log('[DEBUG] handleFinalConfig received:', { services, pricing });
+    setServices(services);
+    setPricing(pricing);
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#F7F8FA] font-inter">
+    <div className="min-h-screen flex flex-col font-inter bg-gradient-to-br from-blue-50 via-white to-orange-50">
       {/* Header */}
-      <header className="bg-white shadow-sm py-3 sticky top-0 z-20">
+      <header className="bg-white/80 shadow-sm py-3 sticky top-0 z-20 backdrop-blur-md">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center">
           <div className="flex items-center">
-            <img src="https://placehold.co/150x35/FF6A00/FFFFFF?text=SCCC+AI+Advisor&font=Inter" alt="SCCC AI Advisor Logo" className="h-8 mr-3" />
+            <img src="https://placehold.co/150x35/FF6A00/FFFFFF?text=SCCC+AI+Advisor&font=Inter" alt="SCCC AI Advisor Logo" className="h-8 mr-3 rounded" />
           </div>
-          <span className="text-sm text-gray-500">Sales Agent: Hiba</span>
+          <span className="text-sm text-gray-500 font-medium">Sales Agent: Hiba</span>
         </div>
       </header>
       {/* Main */}
-      <main className="flex-grow container mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        <div className="flex flex-col md:flex-row gap-6 md:gap-8 h-full">
-          <div className="w-full md:w-1/2 lg:w-2/5">
-            <ChatBot onFinalConfig={handleFinalConfig} />
-          </div>
-          <div className="w-full md:w-1/2 lg:w-3/5">
-            {serviceConfig && pricing ? (
-              <ServiceSummary serviceConfig={serviceConfig} pricing={pricing} />
-            ) : (
-              <div className="bg-white rounded-lg shadow p-6 max-w-md mx-auto flex items-center justify-center h-full text-gray-400 text-lg">
-                Service summary will appear here after configuration is complete.
-              </div>
-            )}
-          </div>
-        </div>
+      <main className="flex-grow container mx-auto px-2 sm:px-6 lg:px-12 py-6 flex flex-col md:flex-row gap-8">
+        {/* Chat Panel */}
+        <section className="w-full md:w-1/2 lg:w-2/5 flex flex-col h-[80vh] bg-white/80 rounded-3xl shadow-xl p-0 md:p-4 backdrop-blur-md border border-blue-100">
+          <ChatBot onFinalConfig={handleFinalConfig} />
+        </section>
+        {/* Summary Panel */}
+        <section className="w-full md:w-1/2 lg:w-3/5 flex flex-col h-[80vh]">
+          {services && pricing ? (
+            <ServiceSummary services={services} pricing={pricing} />
+          ) : (
+            <div className="bg-white/80 rounded-3xl shadow-xl flex items-center justify-center h-full text-gray-400 text-lg border border-orange-100">
+              Service summary will appear here after configuration is complete.
+            </div>
+          )}
+        </section>
       </main>
       {/* Footer */}
-      <footer className="bg-gray-800 text-white text-center py-3 mt-auto">
-        <p className="text-xs">&copy; 2025 SCCC Alibaba Cloud KSA - AI Pricing & Solution Advisor</p>
+      <footer className="bg-gray-900 text-white text-center py-3 mt-auto shadow-inner">
+        <p className="text-xs tracking-wide">&copy; 2025 SCCC Alibaba Cloud KSA - AI Pricing & Solution Advisor</p>
       </footer>
     </div>
   );

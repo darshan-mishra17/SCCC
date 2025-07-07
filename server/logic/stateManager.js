@@ -5,10 +5,14 @@ import Service from '../models/Service.js';
 
 const sessionStates = new Map();
 
-export function initializeState(serviceName) {
+
+// Multi-service: initialize state with one or more services
+export function initializeState(serviceNames) {
+  // serviceNames: array of service keys (e.g. ['ecs', 'tdsql'])
+  if (!Array.isArray(serviceNames)) serviceNames = [serviceNames];
   return {
-    service: serviceName,
-    fields: {},
+    services: serviceNames.map(name => ({ name, fields: {}, complete: false })),
+    currentServiceIdx: 0,
     complete: false
   };
 }
@@ -22,23 +26,32 @@ export function setSessionState(sessionId, state) {
   sessionStates.set(sessionId, state);
 }
 
+
 export async function getRequiredFields(serviceName) {
   // Fetch required fields for the service from MongoDB
   const service = await Service.findOne({ name: serviceName });
   return service ? service.requiredFields : [];
 }
 
-export function getNextMissingField(state, requiredFields) {
-  for (const field of requiredFields) {
-    if (!(field in state.fields)) return field;
+
+
+// Returns the first required field object that is missing from fields
+export function getNextMissingField(fields, requiredFields) {
+  for (const fieldObj of requiredFields) {
+    if (!(fieldObj.key in fields)) return fieldObj;
   }
   return null;
 }
 
-export function updateState(state, field, value) {
-  state.fields[field] = value;
+
+
+// Update fields with the field key from the field object
+export function updateFields(fields, fieldObj, value) {
+  fields[fieldObj.key] = value;
 }
 
-export function isStateComplete(state, requiredFields) {
-  return requiredFields.every(f => f in state.fields);
+
+
+export function isFieldsComplete(fields, requiredFields) {
+  return requiredFields.every(f => f.key in fields);
 }

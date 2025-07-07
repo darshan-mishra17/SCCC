@@ -1,6 +1,6 @@
 import express from 'express';
 import { getGroqAIResponse } from '../logic/groq.js';
-import { initializeState, getSessionState, setSessionState, getRequiredFields, getNextMissingField, updateState, isStateComplete } from '../logic/stateManager.js';
+import { initializeState, getSessionState, setSessionState, getRequiredFields, getNextMissingField, updateFields, isFieldsComplete } from '../logic/stateManager.js';
 import { buildPromptForField } from '../services/promptBuilder.js';
 import { calculatePricing } from '../logic/pricing.js';
 
@@ -18,69 +18,132 @@ router.post('/message', async (req, res) => {
     let state = getSessionState(sessionId);
     // Step 1: Service selection if not started
     if (!state) {
-      let serviceName = null;
-      if (/ecs|virtual machine|vm/i.test(userMessage)) serviceName = 'ecs';
-      else if (/oss|object storage/i.test(userMessage)) serviceName = 'oss';
-      else if (/tdsql|database|mysql|rds/i.test(userMessage)) serviceName = 'tdsql';
-      if (!serviceName) {
-        return res.json({ message: 'Which service would you like to configure? (ECS, OSS, TDSQL)' });
+      // Detect multiple services in user message
+      let serviceNames = [];
+      if (/ecs|virtual machine|vm/i.test(userMessage)) serviceNames.push('ecs');
+      if (/oss|object storage/i.test(userMessage)) serviceNames.push('oss');
+      if (/tdsql|database|mysql|rds/i.test(userMessage)) serviceNames.push('tdsql');
+      if (serviceNames.length === 0) {
+        return res.json({ message: 'Which service(s) would you like to configure? (ECS, OSS, TDSQL) You can mention more than one.' });
       }
-      state = initializeState(serviceName);
+      state = initializeState(serviceNames);
       setSessionState(sessionId, state);
     }
 
-    // Step 2: Get required fields for the selected service
+    // Multi-service: handle each service in order
+    const { services, currentServiceIdx } = state;
+    const currentService = services[currentServiceIdx];
     let requiredFields;
     try {
-      requiredFields = await getRequiredFields(state.service);
+      requiredFields = await getRequiredFields(currentService.name);
       if (!requiredFields || !Array.isArray(requiredFields) || requiredFields.length === 0) {
-        throw new Error('No required fields found for service: ' + state.service);
+        throw new Error('No required fields found for service: ' + currentService.name);
       }
     } catch (err) {
       console.error('[AI ROUTE] Error fetching required fields:', err);
-      return res.status(500).json({ error: 'Failed to fetch required fields for service: ' + state.service });
+      return res.status(500).json({ error: 'Failed to fetch required fields for service: ' + currentService.name });
     }
 
-    // Step 3: Find next missing field
-    const nextField = getNextMissingField(state, requiredFields);
+    // Find next missing field for current service
+    const nextFieldObj = getNextMissingField(currentService.fields, requiredFields);
 
-    // Step 4: If all fields collected, show summary and pricing
-    if (!nextField) {
-      const pricing = calculatePricing({ [state.service]: state.fields });
-      setSessionState(sessionId, null); // End session
-      return res.json({
-        message: `Here is your configuration for ${state.service.toUpperCase()}:\n${Object.entries(state.fields).map(([k,v]) => `- ${k}: ${v}`).join('\n')}\nTotal Monthly Cost: SAR ${pricing.totalMonthlySAR}`
-      });
+    // If all fields for current service collected, move to next service or finish
+    if (!nextFieldObj) {
+      services[currentServiceIdx].complete = true;
+      // If more services to configure
+      if (currentServiceIdx < services.length - 1) {
+        state.currentServiceIdx++;
+        setSessionState(sessionId, state);
+        const nextService = services[state.currentServiceIdx].name.toUpperCase();
+        return res.json({ message: `Now let's configure your ${nextService} service.` });
+      } else {
+        // All services complete, show summary and pricing
+        const pricingInput = {};
+        services.forEach(s => { pricingInput[s.name] = s.fields; });
+        const pricing = calculatePricing(pricingInput);
+        setSessionState(sessionId, null); // End session
+        // Build services array for UI cards
+        const servicesArr = services.map(s => {
+          // Calculate monthly cost for each service
+          let monthlyCost = 0;
+          try {
+            const singlePricing = calculatePricing({ [s.name]: s.fields });
+            monthlyCost = singlePricing.totalMonthlySAR || 0;
+          } catch (e) { monthlyCost = 0; }
+          return {
+            name: s.name,
+            config: s.fields,
+            monthlyCost
+          };
+        });
+        return res.json({
+          services: servicesArr,
+          pricing
+        });
+      }
     }
 
-    // Step 5: Use AI to extract the value for the next field from user input
-    const aiExtractPrompt = `Extract the value for the field "${nextField}" from this user message: "${userMessage}". If not present, respond with null. Respond in JSON: { "${nextField}": value }`;
+    // Use AI to extract the value for the next field from user input
+    const aiExtractPrompt = `Extract the value for the field "${nextFieldObj.label || nextFieldObj.key}" from this user message: "${userMessage}". If not present, respond with null. Respond in JSON: { "${nextFieldObj.key}": value }`;
     let aiExtracted = null;
     try {
       aiExtracted = await getGroqAIResponse('default', { prompt: aiExtractPrompt });
     } catch (e) {
       console.error('[AI ROUTE] AI extraction error:', e);
-      aiExtracted = { [nextField]: null };
+      aiExtracted = { [nextFieldObj.key]: null };
     }
-    const value = aiExtracted[nextField];
-
+    const value = aiExtracted[nextFieldObj.key];
+    // DEBUG: Log state and required fields after extraction
+    console.log('[DEBUG] Session state:', JSON.stringify(state, null, 2));
+    console.log('[DEBUG] Required fields:', requiredFields);
     if (value !== null && value !== undefined && value !== '') {
-      updateState(state, nextField, value);
+      updateFields(currentService.fields, nextFieldObj, value);
       setSessionState(sessionId, state);
-      // After update, check if more fields needed
-      const nextMissing = getNextMissingField(state, requiredFields);
+      // After update, check if more fields needed for this service
+      const nextMissing = getNextMissingField(currentService.fields, requiredFields);
+      // DEBUG: Log fields after update
+      console.log('[DEBUG] Fields after update:', currentService.fields);
       if (!nextMissing) {
-        const pricing = calculatePricing({ [state.service]: state.fields });
-        setSessionState(sessionId, null);
-        return res.json({
-          message: `Here is your configuration for ${state.service.toUpperCase()}:\n${Object.entries(state.fields).map(([k,v]) => `- ${k}: ${v}`).join('\n')}\nTotal Monthly Cost: SAR ${pricing.totalMonthlySAR}`
-        });
+        services[currentServiceIdx].complete = true;
+        if (currentServiceIdx < services.length - 1) {
+          state.currentServiceIdx++;
+          setSessionState(sessionId, state);
+          const nextService = services[state.currentServiceIdx].name.toUpperCase();
+          return res.json({ message: `Now let's configure your ${nextService} service.` });
+        } else {
+          // All services complete, show summary and pricing (structured data only)
+          const pricingInput = {};
+          services.forEach(s => { pricingInput[s.name] = s.fields; });
+          const pricing = calculatePricing(pricingInput);
+          setSessionState(sessionId, null); // End session
+          // Build services array for UI cards
+          const servicesArr = services.map(s => {
+            // Calculate monthly cost for each service
+            let monthlyCost = 0;
+            try {
+              const singlePricing = calculatePricing({ [s.name]: s.fields });
+              monthlyCost = singlePricing.totalMonthlySAR || 0;
+            } catch (e) { monthlyCost = 0; }
+            return {
+              name: s.name,
+              config: s.fields,
+              monthlyCost
+            };
+          });
+          // DEBUG: Log final services and pricing
+          console.log('[DEBUG] Returning servicesArr:', servicesArr);
+          console.log('[DEBUG] Returning pricing:', pricing);
+          return res.json({
+            services: servicesArr,
+            pricing
+          });
+        }
       } else {
         return res.json({ message: buildPromptForField(nextMissing) });
       }
     } else {
       // If value not found, ask the prompt for this field
-      return res.json({ message: buildPromptForField(nextField) });
+      return res.json({ message: buildPromptForField(nextFieldObj) });
     }
   } catch (err) {
     console.error('[AI ROUTE] Unexpected error:', err);

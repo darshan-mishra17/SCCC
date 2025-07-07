@@ -25,7 +25,7 @@ Do not explain, just output the value directly.
     const response = await axios.post(
       'https://api.groq.com/openai/v1/chat/completions',
       {
-        model: "mixtral-8x7b-32768",
+        model: "qwen/qwen3-32b",
         messages,
         temperature: 0.2
       },
