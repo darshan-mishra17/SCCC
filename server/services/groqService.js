@@ -1,45 +1,46 @@
+// backend/services/groqService.js
 
-const axios = require('axios');
+import axios from 'axios';
+import dotenv from 'dotenv';
+dotenv.config();
 
-// Set your Groq API endpoint and key here
-const GROQ_API_URL = process.env.GROQ_API_URL || 'https://api.groq.com/v1/chat/completions';
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const MODEL = 'qwen/qwen3-32b'; // or 'llama3'
+export async function extractFieldValue(userMessage, fieldName) {
+  const systemPrompt = `
+You are a helpful AI assistant. Your task is to extract ONLY the value for the field: "${fieldName}" from the user message.
 
-/**
- * Sends user input to Groq LLM to extract the value for the current field.
- * @param {string} userInput
- * @param {string} currentField
- * @returns {Promise<string>} Extracted value
- */
-async function extractFieldValue(userInput, currentField) {
-  const systemPrompt = `You are an AI assistant helping users configure cloud services. Extract only the value for the field: ${currentField}`;
+Examples:
+- If the field is "operatingSystem", expected answers are "Linux", "Windows".
+- If the field is "systemDiskGB", reply only with the number of GB.
+- If the field is "engine", respond with values like "MySQL", "PostgreSQL".
+
+Do not explain, just output the value directly.
+`;
+
   const messages = [
-    { role: 'system', content: systemPrompt },
-    { role: 'user', content: userInput }
+    { role: "system", content: systemPrompt },
+    { role: "user", content: userMessage }
   ];
+
   try {
     const response = await axios.post(
-      GROQ_API_URL,
+      'https://api.groq.com/openai/v1/chat/completions',
       {
-        model: MODEL,
+        model: "mixtral-8x7b-32768",
         messages,
-        max_tokens: 20,
-        temperature: 0
+        temperature: 0.2
       },
       {
         headers: {
-          'Authorization': `Bearer ${GROQ_API_KEY}`,
+          Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
           'Content-Type': 'application/json'
         }
       }
     );
-    // Return only the model's reply (should be the value)
-    return response.data.choices[0].message.content.trim();
-  } catch (err) {
-    console.error('Groq extractFieldValue error:', err.response?.data || err.message);
-    throw new Error('Failed to extract field value from Groq');
+
+    const content = response.data.choices[0].message.content.trim();
+    return content;
+  } catch (error) {
+    console.error("Groq API Error:", error.message);
+    return null;
   }
 }
-
-module.exports = { extractFieldValue };

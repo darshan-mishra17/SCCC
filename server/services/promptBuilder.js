@@ -1,21 +1,19 @@
+// backend/services/promptBuilder.js
 
-// Maps field names to human-readable questions
-const fieldPrompts = {
-  os: "What operating system would you like for your virtual machine (Linux/Windows)?",
-  systemDisk: "How much system disk do you need in GB?",
-  database: "Do you need a database? If so, which one?",
-  bandwidth: "What bandwidth (in Mbps) do you require?",
-  storageClass: "Which OSS storage class do you need (Standard/IA/Archive)?",
-  capacity: "How much storage capacity do you need in GB?",
-  region: "Which region should the service be deployed in?",
-  engine: "Which database engine do you want (e.g., MySQL, PostgreSQL)?",
-  version: "What version of the database engine do you need?",
-  storage: "How much database storage do you need in GB?",
-  instanceType: "What instance type do you require for TDSQL?"
+const promptMap = {
+  operatingSystem: "Which operating system would you like to use (Linux/Windows)?",
+  systemDiskGB: "How much system disk do you need (in GB)?",
+  bandwidthMbps: "What bandwidth do you require (in Mbps)?",
+  storageGB: "How much storage do you need (in GB)?",
+  engine: "What database engine do you prefer (e.g., MySQL, PostgreSQL)?",
+  storageClass: "What storage class do you want (Standard/Archive)?",
+  retentionDays: "How long do you want to retain backups (in days)?",
+  frequency: "What backup frequency do you need (Daily/Weekly)?",
+  instanceType: "What instance type are you targeting (e.g., ecs.g6.large)?",
+  plan: "Which WAF plan do you want (Basic/Enterprise)?",
+  domainsProtected: "How many domains do you want to protect?"
 };
 
-function buildPromptForField(fieldName, state) {
-  return fieldPrompts[fieldName] || `Please provide a value for ${fieldName}.`;
+export function buildPromptForField(fieldName) {
+  return promptMap[fieldName] || `Please provide value for ${fieldName}`;
 }
-
-module.exports = { buildPromptForField };
