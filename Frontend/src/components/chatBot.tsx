@@ -3,6 +3,24 @@ import axios from 'axios';
 import { v4 as uuidv4 } from 'uuid';
 import ChatMessage from './ChatMessage';
 
+// Utility to ensure message is a string
+const ensureString = (message: unknown): string => {
+  if (typeof message === 'string') return message;
+  if (typeof message === 'number') return String(message);
+  if (message && typeof message === 'object') {
+    try {
+      if ('message' in message) return String(message.message);
+      if ('response' in message) return String(message.response);
+      if ('question' in message) return String(message.question);
+      return JSON.stringify(message);
+    } catch (e) {
+      console.error('Failed to stringify message:', message);
+      return '[Complex message]';
+    }
+  }
+  return String(message);
+};
+
 interface ChatMessageType {
   sender: 'user' | 'ai';
   text: string;
@@ -15,16 +33,17 @@ interface ChatBotProps {
 
 const ChatBot: React.FC<ChatBotProps> = ({ onFinalConfig }) => {
   const [sessionId] = useState(() => uuidv4());
-  const [chat, setChat] = useState<ChatMessageType[]>([
-    {
-      sender: 'ai',
-      text: 'Hello! I am your AI Pricing Advisor. Which service would you like to configure? (ECS, OSS, TDSQL)',
-      timestamp: new Date(),
-    },
-  ]);
+  const [chat, setChat] = useState<ChatMessageType[]>(
+    [
+      {
+        sender: 'ai',
+        text: 'Hello! I am your AI Pricing Advisor. Which service would you like to configure? (ECS, OSS, TDSQL)',
+        timestamp: new Date(),
+      },
+    ]
+  );
   const [userMessage, setUserMessage] = useState('');
   const [loading, setLoading] = useState(false);
-  // No summary state needed; summary is handled in parent
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -47,6 +66,9 @@ const ChatBot: React.FC<ChatBotProps> = ({ onFinalConfig }) => {
     setUserMessage('');
     setLoading(true);
 
+    // Show "AI is thinking..." message
+    setChat((prev) => [...prev, { sender: 'ai', text: '...', timestamp: new Date() }]);
+
     try {
       const res = await axios.post(
         'http://localhost:4000/api/ai/message',
@@ -60,25 +82,28 @@ const ChatBot: React.FC<ChatBotProps> = ({ onFinalConfig }) => {
           },
         }
       );
-      // DEBUG: Log backend response
-      console.log('[DEBUG] Backend response:', res.data);
 
-      // Only add to chat if not a final configuration/summary
-      if (res.data?.services && res.data?.pricing) {
-        if (onFinalConfig) {
-          onFinalConfig(res.data.services, res.data.pricing);
-        }
-        // Do NOT add summary message to chat
-      } else if (res.data?.message) {
-        const aiMessageObj: ChatMessageType = {
-          sender: 'ai',
-          text: res.data.message,
-          timestamp: new Date(),
-        };
-        setChat((prev) => [...prev, aiMessageObj]);
+      // Remove the last "..." message
+      setChat((prev) => prev.slice(0, -1));
+
+      // Always ensure message is a string
+      if (res.data?.message !== undefined) {
+        const safeMessage = ensureString(res.data.message);
+        setTimeout(() => {
+          setChat((prev) => [...prev, {
+            sender: 'ai',
+            text: safeMessage,
+            timestamp: new Date(),
+          }]);
+        }, 400);
+      }
+
+      // Only call onFinalConfig if services/pricing present
+      if (res.data?.services && res.data?.pricing && onFinalConfig) {
+        onFinalConfig(res.data.services, res.data.pricing);
       }
     } catch (err) {
-      console.error('API Error:', err);
+      setChat((prev) => prev.slice(0, -1));
       const errorMessageObj: ChatMessageType = {
         sender: 'ai',
         text: 'Sorry, there was an error processing your request. Please try again.',
@@ -93,9 +118,20 @@ const ChatBot: React.FC<ChatBotProps> = ({ onFinalConfig }) => {
   return (
     <div className="flex flex-col h-full bg-white rounded-lg shadow p-4 max-w-2xl mx-auto">
       <div className="flex-1 overflow-y-auto mb-2 space-y-2 pb-2">
-        {chat.map((msg, idx) => (
-          <ChatMessage key={idx} role={msg.sender} content={msg.text} />
-        ))}
+        {chat.map((msg, idx) => {
+          // Extra safety: log and stringify if needed
+          let safeText = msg.text;
+          // Catch-all: always render a string or number, never an object/array
+          if (typeof safeText !== 'string' && typeof safeText !== 'number') {
+            console.error('Non-string/number message detected in chat:', safeText);
+            try {
+              safeText = JSON.stringify(safeText);
+            } catch (e) {
+              safeText = '[Unrenderable message]';
+            }
+          }
+          return <ChatMessage key={idx} role={msg.sender} content={safeText} />;
+        })}
         <div ref={chatEndRef} />
         {/* No summary here; summary is shown in the right panel only */}
       </div>

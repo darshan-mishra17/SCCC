@@ -7,6 +7,39 @@ dotenv.config();
 const GROQ_API_URL = process.env.GROQ_API_URL || 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
+async function getGroqConversationalResponse(prompt) {
+  try {
+    const response = await axios.post(
+      GROQ_API_URL,
+      {
+        model: 'llama3-70b-8192',
+        messages: [
+          { role: 'system', content: 'You are a helpful AI sales advisor. Respond naturally and conversationally.' },
+          { role: 'user', content: prompt }
+        ],
+        temperature: 0.7
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${GROQ_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 10000,
+      }
+    );
+    
+    const content = response.data?.choices?.[0]?.message?.content;
+    if (typeof content === 'string') {
+      return content;
+    }
+    throw new Error('No valid response from Groq');
+  } catch (err) {
+    console.error('[GROQ CONVERSATIONAL ERROR]', err && (err.response?.data || err.stack || err));
+    // Fallback response
+    return 'I apologize, but I encountered an error. Please try again.';
+  }
+}
+
 async function getGroqAIResponse(promptType, context) {
   // Use improved prompt builder
   const prompt = buildPrompt(promptType, context);
@@ -61,4 +94,4 @@ async function getGroqAIResponse(promptType, context) {
   }
 }
 
-export { getGroqAIResponse };
+export { getGroqAIResponse, getGroqConversationalResponse };

@@ -46,10 +46,45 @@ const ChatBot = () => {
         }
       });
 
-      if (res.data?.message) {
+      if (res.data?.message !== undefined) {
+        // Debug: log what we're receiving
+        console.log('Received message from backend:', res.data.message, 'Type:', typeof res.data.message);
+        
+        // Aggressively ensure message is always a string
+        let messageText;
+        try {
+          if (typeof res.data.message === 'string') {
+            messageText = res.data.message;
+          } else if (typeof res.data.message === 'object' && res.data.message !== null) {
+            console.log('Object keys:', Object.keys(res.data.message));
+            // Try multiple properties that might contain the actual message
+            if (res.data.message.message) {
+              messageText = String(res.data.message.message);
+            } else if (res.data.message.question) {
+              messageText = String(res.data.message.question);
+            } else if (res.data.message.response) {
+              messageText = String(res.data.message.response);
+            } else if (res.data.message.text) {
+              messageText = String(res.data.message.text);
+            } else if (res.data.message.content) {
+              messageText = String(res.data.message.content);
+            } else {
+              // Last resort: stringify the entire object
+              messageText = JSON.stringify(res.data.message);
+            }
+          } else {
+            messageText = String(res.data.message);
+          }
+        } catch (error) {
+          console.error('Error converting message to string:', error);
+          messageText = 'Error displaying message';
+        }
+        
+        console.log('Final messageText:', messageText);
+        
         const aiMessageObj = {
           sender: 'ai',
-          text: res.data.message,
+          text: messageText,
           timestamp: new Date()
         };
         setChat(prev => [...prev, aiMessageObj]);
@@ -78,7 +113,7 @@ const ChatBot = () => {
                 ? 'bg-blue-500 text-white rounded-br-none' 
                 : 'bg-gray-200 text-gray-900 rounded-bl-none'
             }`}>
-              {msg.text}
+              {typeof msg.text === 'string' ? msg.text : JSON.stringify(msg.text)}
               <div className="text-xs opacity-70 mt-1">
                 {msg.timestamp?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </div>

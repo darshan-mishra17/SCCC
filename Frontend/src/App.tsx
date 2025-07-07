@@ -18,6 +18,9 @@ const App: React.FC = () => {
   const [services, setServices] = useState<Service[] | null>(null);
   const [pricing, setPricing] = useState<Pricing | null>(null);
 
+  // DEBUG: Log state on every render
+  console.log('[DEBUG] App state:', { services, pricing });
+
   // Handler to receive final config and pricing from ChatBot
   const handleFinalConfig = (services: Service[], pricing: Pricing) => {
     console.log('[DEBUG] handleFinalConfig received:', { services, pricing });
@@ -44,8 +47,10 @@ const App: React.FC = () => {
         </section>
         {/* Summary Panel */}
         <section className="w-full md:w-1/2 lg:w-3/5 flex flex-col h-[80vh]">
-          {services && pricing ? (
+          {Array.isArray(services) && pricing ? (
             <ServiceSummary services={services} pricing={pricing} />
+          ) : services && pricing ? (
+            <div className="text-red-600 font-bold p-8">Error: services is not an array. Debug: {JSON.stringify(services)}</div>
           ) : (
             <div className="bg-white/80 rounded-3xl shadow-xl flex items-center justify-center h-full text-gray-400 text-lg border border-orange-100">
               Service summary will appear here after configuration is complete.

@@ -1,10 +1,43 @@
 import express from 'express';
-import { getGroqAIResponse } from '../logic/groq.js';
+import { getGroqAIResponse, getGroqConversationalResponse } from '../logic/groq.js';
 import { initializeState, getSessionState, setSessionState, getRequiredFields, getNextMissingField, updateFields, isFieldsComplete } from '../logic/stateManager.js';
 import { buildPromptForField } from '../services/promptBuilder.js';
 import { calculatePricing } from '../logic/pricing.js';
 
+// Helper to ensure messages are always strings
+function stringifyMessage(msg) {
+  console.log('[DEBUG] stringifyMessage input:', JSON.stringify(msg, null, 2), 'Type:', typeof msg);
+  if (typeof msg === 'string') {
+    // If it's already the problematic "[object Object]" string, that means something went wrong earlier
+    if (msg === '[object Object]') {
+      console.error('[ERROR] Received [object Object] string - this should not happen');
+      return 'Sorry, there was an error processing the message.';
+    }
+    return msg;
+  }
+  if (typeof msg === 'object' && msg !== null) {
+    console.log('[DEBUG] Object keys:', Object.keys(msg));
+    // Try different possible message properties
+    if (msg.message && typeof msg.message === 'string') return msg.message;
+    if (msg.response && typeof msg.response === 'string') return msg.response;
+    if (msg.question && typeof msg.question === 'string') return msg.question;
+    if (msg.text && typeof msg.text === 'string') return msg.text;
+    if (msg.content && typeof msg.content === 'string') return msg.content;
+    
+    // If no string property found, stringify the whole object
+    const result = JSON.stringify(msg);
+    console.log('[DEBUG] Stringified object result:', result);
+    return result;
+  }
+  const result = String(msg);
+  console.log('[DEBUG] String conversion result:', result);
+  return result;
+}
+
 const router = express.Router();
+
+// Add a simple in-memory chat history per session
+const chatHistories = new Map();
 
 // POST /api/ai/message
 // AI-powered, catalog-driven, dynamic field extraction
@@ -15,6 +48,10 @@ router.post('/message', async (req, res) => {
       return res.status(400).json({ error: 'Missing sessionId or userMessage' });
     }
 
+    // Track chat history for this session
+    if (!chatHistories.has(sessionId)) chatHistories.set(sessionId, []);
+    chatHistories.get(sessionId).push({ role: 'user', content: userMessage });
+
     let state = getSessionState(sessionId);
     // Step 1: Service selection if not started
     if (!state) {
@@ -24,7 +61,13 @@ router.post('/message', async (req, res) => {
       if (/oss|object storage/i.test(userMessage)) serviceNames.push('oss');
       if (/tdsql|database|mysql|rds/i.test(userMessage)) serviceNames.push('tdsql');
       if (serviceNames.length === 0) {
-        return res.json({ message: 'Which service(s) would you like to configure? (ECS, OSS, TDSQL) You can mention more than one.' });
+        // Let AI handle the greeting and first question
+        const aiMsg = await getGroqConversationalResponse(
+          `You are an AI sales advisor. Greet the user and ask which service they want to configure (ECS, OSS, TDSQL). Be conversational.`
+        );
+        const msg = stringifyMessage(aiMsg);
+        chatHistories.get(sessionId).push({ role: 'assistant', content: msg });
+        return res.json({ message: msg });
       }
       state = initializeState(serviceNames);
       setSessionState(sessionId, state);
@@ -45,30 +88,41 @@ router.post('/message', async (req, res) => {
     }
 
     // Find next missing field for current service
-    const nextFieldObj = getNextMissingField(currentService.fields, requiredFields);
-
-    // If all fields for current service collected, move to next service or finish
+    let nextFieldObj = getNextMissingField(currentService.fields, requiredFields);
     if (!nextFieldObj) {
       services[currentServiceIdx].complete = true;
-      // If more services to configure
       if (currentServiceIdx < services.length - 1) {
         state.currentServiceIdx++;
         setSessionState(sessionId, state);
-        const nextService = services[state.currentServiceIdx].name.toUpperCase();
-        return res.json({ message: `Now let's configure your ${nextService} service.` });
+        // Let AI introduce the next service
+        const aiMsg = await getGroqConversationalResponse(
+          `You are an AI sales advisor. The user finished configuring ${currentService.name}. Now introduce and start configuring ${services[state.currentServiceIdx].name}. Be conversational.`
+        );
+        const msg = stringifyMessage(aiMsg);
+        chatHistories.get(sessionId).push({ role: 'assistant', content: msg });
+        return res.json({ message: msg });
       } else {
         // All services complete, show summary and pricing
         const pricingInput = {};
         services.forEach(s => { pricingInput[s.name] = s.fields; });
-        const pricing = calculatePricing(pricingInput);
+        let pricing;
+        if (pricingInput.ecs) {
+          const { calculatePrice } = await import('../logic/pricing.js');
+          pricing = calculatePrice(pricingInput.ecs);
+        } else {
+          pricing = calculatePricing(pricingInput);
+        }
         setSessionState(sessionId, null); // End session
-        // Build services array for UI cards
+        chatHistories.delete(sessionId);
         const servicesArr = services.map(s => {
-          // Calculate monthly cost for each service
           let monthlyCost = 0;
           try {
-            const singlePricing = calculatePricing({ [s.name]: s.fields });
-            monthlyCost = singlePricing.totalMonthlySAR || 0;
+            if (s.name.toLowerCase() === 'ecs') {
+              const { calculatePrice } = require('../logic/pricing.js');
+              monthlyCost = calculatePrice(s.fields).totalMonthlySAR || 0;
+            } else {
+              monthlyCost = calculatePricing({ [s.name]: s.fields }).totalMonthlySAR || 0;
+            }
           } catch (e) { monthlyCost = 0; }
           return {
             name: s.name,
@@ -76,77 +130,36 @@ router.post('/message', async (req, res) => {
             monthlyCost
           };
         });
-        return res.json({
-          services: servicesArr,
-          pricing
-        });
+        return res.json({ services: servicesArr, pricing });
       }
     }
 
-    // Use AI to extract the value for the next field from user input
-    const aiExtractPrompt = `Extract the value for the field "${nextFieldObj.label || nextFieldObj.key}" from this user message: "${userMessage}". If not present, respond with null. Respond in JSON: { "${nextFieldObj.key}": value }`;
+    // Let AI generate the next conversational message
+    const history = chatHistories.get(sessionId)
+      .map(m => `${m.role === 'user' ? 'User' : 'AI'}: ${m.content}`)
+      .join('\n');
+    const aiPrompt = `You are an AI sales advisor helping a user configure ${currentService.name}. Here is the conversation so far:\n${history}\nAsk for the value of: ${nextFieldObj.label || nextFieldObj.key}. Be conversational, confirm previous answers, and only ask one question at a time.`;
+    let aiMsg = await getGroqConversationalResponse(aiPrompt);
+    
+    // Ensure aiMsg is always a string
+    const messageText = stringifyMessage(aiMsg);
+    chatHistories.get(sessionId).push({ role: 'assistant', content: messageText });
+
+    // Try to extract the value for the next field from the user's last message
+    const aiExtractPrompt = `Extract the value for the field \"${nextFieldObj.label || nextFieldObj.key}\" from this user message: \"${userMessage}\". If not present, respond with null. Respond in JSON: { \"${nextFieldObj.key}\": value }`;
     let aiExtracted = null;
     try {
       aiExtracted = await getGroqAIResponse('default', { prompt: aiExtractPrompt });
     } catch (e) {
-      console.error('[AI ROUTE] AI extraction error:', e);
       aiExtracted = { [nextFieldObj.key]: null };
     }
     const value = aiExtracted[nextFieldObj.key];
-    // DEBUG: Log state and required fields after extraction
-    console.log('[DEBUG] Session state:', JSON.stringify(state, null, 2));
-    console.log('[DEBUG] Required fields:', requiredFields);
     if (value !== null && value !== undefined && value !== '') {
       updateFields(currentService.fields, nextFieldObj, value);
       setSessionState(sessionId, state);
-      // After update, check if more fields needed for this service
-      const nextMissing = getNextMissingField(currentService.fields, requiredFields);
-      // DEBUG: Log fields after update
-      console.log('[DEBUG] Fields after update:', currentService.fields);
-      if (!nextMissing) {
-        services[currentServiceIdx].complete = true;
-        if (currentServiceIdx < services.length - 1) {
-          state.currentServiceIdx++;
-          setSessionState(sessionId, state);
-          const nextService = services[state.currentServiceIdx].name.toUpperCase();
-          return res.json({ message: `Now let's configure your ${nextService} service.` });
-        } else {
-          // All services complete, show summary and pricing (structured data only)
-          const pricingInput = {};
-          services.forEach(s => { pricingInput[s.name] = s.fields; });
-          const pricing = calculatePricing(pricingInput);
-          setSessionState(sessionId, null); // End session
-          // Build services array for UI cards
-          const servicesArr = services.map(s => {
-            // Calculate monthly cost for each service
-            let monthlyCost = 0;
-            try {
-              const singlePricing = calculatePricing({ [s.name]: s.fields });
-              monthlyCost = singlePricing.totalMonthlySAR || 0;
-            } catch (e) { monthlyCost = 0; }
-            return {
-              name: s.name,
-              config: s.fields,
-              monthlyCost
-            };
-          });
-          // DEBUG: Log final services and pricing
-          console.log('[DEBUG] Returning servicesArr:', servicesArr);
-          console.log('[DEBUG] Returning pricing:', pricing);
-          return res.json({
-            services: servicesArr,
-            pricing
-          });
-        }
-      } else {
-        return res.json({ message: buildPromptForField(nextMissing) });
-      }
-    } else {
-      // If value not found, ask the prompt for this field
-      return res.json({ message: buildPromptForField(nextFieldObj) });
     }
+    return res.json({ message: messageText });
   } catch (err) {
-    console.error('[AI ROUTE] Unexpected error:', err);
     return res.status(500).json({ error: 'Internal server error', details: err.message });
   }
 });

@@ -45,10 +45,8 @@ const serviceIcons: Record<string, string> = {
 
 const ServiceSummary: React.FC<Props> = ({ services, pricing }) => {
   // DEBUG: Log props
-  console.log('[DEBUG] ServiceSummary props:', { services, pricing });
-  if (!services || services.length === 0) {
-    return <div className="text-red-600 font-bold p-8">No services to display. (Debug: {JSON.stringify(services)})</div>;
-  }
+  // console.log('[DEBUG] ServiceSummary props:', { services, pricing });
+  // Remove error fallback, always render summary if services is an array
   return (
     <div className="w-full h-full flex flex-col">
       <div className="text-2xl font-bold text-gray-800 mb-4">AI Suggested Solution & Estimate</div>
