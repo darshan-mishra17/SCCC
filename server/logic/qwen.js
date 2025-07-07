@@ -1,7 +1,8 @@
-// logic/qwen.js (now uses Groq API)
-const { buildPrompt } = require('./promptBuilder');
-const axios = require('axios');
-require('dotenv').config();
+// logic/qwen.js (now uses Groq API, ESM)
+import { buildPrompt } from './promptBuilder.js';
+import axios from 'axios';
+import dotenv from 'dotenv';
+dotenv.config();
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
@@ -45,4 +46,4 @@ async function getAIResponse(promptType, context) {
   }
 }
 
-module.exports = { getAIResponse };
+export { getAIResponse };

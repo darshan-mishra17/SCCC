@@ -1,7 +1,8 @@
 // logic/groq.js
-const axios = require('axios');
-require('dotenv').config();
-const { buildPrompt } = require('./promptBuilder');
+import axios from 'axios';
+import dotenv from 'dotenv';
+import { buildPrompt } from './promptBuilder.js';
+dotenv.config();
 
 const GROQ_API_URL = process.env.GROQ_API_URL || 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
@@ -60,4 +61,4 @@ async function getGroqAIResponse(promptType, context) {
   }
 }
 
-module.exports = { getGroqAIResponse };
+export { getGroqAIResponse };

@@ -1,6 +1,7 @@
-const express = require('express');
+import express from 'express';
+import { calculatePricing } from '../logic/pricing.js';
+
 const router = express.Router();
-const { calculatePricing } = require('../logic/pricing');
 
 // POST /api/pricing
 router.post('/', async (req, res) => {
@@ -12,4 +13,4 @@ router.post('/', async (req, res) => {
   }
 });
 
-module.exports = router;
+export default router;

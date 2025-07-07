@@ -1,43 +1,94 @@
-// const express = require('express');
-// const router = express.Router();
-// const { generateConfig } = require('../logic/ai');
+import express from 'express';
+import { getGroqAIResponse } from '../logic/groq.js';
+import { initializeState, getSessionState, setSessionState, getRequiredFields, getNextMissingField, updateState, isStateComplete } from '../logic/stateManager.js';
+import { buildPromptForField } from '../services/promptBuilder.js';
+import { calculatePricing } from '../logic/pricing.js';
 
-// // POST /api/ai
+const router = express.Router();
 
-// router.post('/', async (req, res) => {
-//   const { promptType, inputContext } = req.body;
-//   console.log('[AI ROUTE] Received /api/ai POST:', { promptType, inputContext });
-//   try {
-//     const config = await generateConfig(promptType, inputContext);
-//     console.log('[AI ROUTE] AI config generated:', config);
-//     // Convert config object to array for frontend
-//     const serviceMap = {
-//       ecs: {
-//         name: 'Elastic Compute Service (ECS)',
-//         getConfig: (c) => `${c.instanceType || ''}${c.count ? ', Count: ' + c.count : ''}`,
-//       },
-//       oss: {
-//         name: 'Object Storage Service (OSS)',
-//         getConfig: (c) => `Storage: ${c.storageGB || 0} GB`,
-//       },
-//       tdsql: {
-//         name: 'TDSQL',
-//         getConfig: (c) => `Nodes: ${c.nodes || 1}, Engine: ${c.engine || ''}`,
-//       },
-//     };
-//     // If config is already an array, return as { solution: [...] }
-//     if (Array.isArray(config)) {
-//       res.json({
-//         message: 'Here is the recommended configuration:',
-//         solution: config
-//       });
-//       return;
-//     }
-//     // If config is an object, convert to array for frontend and calculate monthlyCost
-//     let arr = [];
-//     if (config && typeof config === 'object') {
-//       // Import pricing logic here to avoid circular dependency at top
-//       const { calculatePricing } = require('../logic/pricing');
+// POST /api/ai/message
+// AI-powered, catalog-driven, dynamic field extraction
+router.post('/message', async (req, res) => {
+  try {
+    const { sessionId, userMessage } = req.body;
+    if (!sessionId || !userMessage) {
+      return res.status(400).json({ error: 'Missing sessionId or userMessage' });
+    }
+
+    let state = getSessionState(sessionId);
+    // Step 1: Service selection if not started
+    if (!state) {
+      let serviceName = null;
+      if (/ecs|virtual machine|vm/i.test(userMessage)) serviceName = 'ecs';
+      else if (/oss|object storage/i.test(userMessage)) serviceName = 'oss';
+      else if (/tdsql|database|mysql|rds/i.test(userMessage)) serviceName = 'tdsql';
+      if (!serviceName) {
+        return res.json({ message: 'Which service would you like to configure? (ECS, OSS, TDSQL)' });
+      }
+      state = initializeState(serviceName);
+      setSessionState(sessionId, state);
+    }
+
+    // Step 2: Get required fields for the selected service
+    let requiredFields;
+    try {
+      requiredFields = await getRequiredFields(state.service);
+      if (!requiredFields || !Array.isArray(requiredFields) || requiredFields.length === 0) {
+        throw new Error('No required fields found for service: ' + state.service);
+      }
+    } catch (err) {
+      console.error('[AI ROUTE] Error fetching required fields:', err);
+      return res.status(500).json({ error: 'Failed to fetch required fields for service: ' + state.service });
+    }
+
+    // Step 3: Find next missing field
+    const nextField = getNextMissingField(state, requiredFields);
+
+    // Step 4: If all fields collected, show summary and pricing
+    if (!nextField) {
+      const pricing = calculatePricing({ [state.service]: state.fields });
+      setSessionState(sessionId, null); // End session
+      return res.json({
+        message: `Here is your configuration for ${state.service.toUpperCase()}:\n${Object.entries(state.fields).map(([k,v]) => `- ${k}: ${v}`).join('\n')}\nTotal Monthly Cost: SAR ${pricing.totalMonthlySAR}`
+      });
+    }
+
+    // Step 5: Use AI to extract the value for the next field from user input
+    const aiExtractPrompt = `Extract the value for the field "${nextField}" from this user message: "${userMessage}". If not present, respond with null. Respond in JSON: { "${nextField}": value }`;
+    let aiExtracted = null;
+    try {
+      aiExtracted = await getGroqAIResponse('default', { prompt: aiExtractPrompt });
+    } catch (e) {
+      console.error('[AI ROUTE] AI extraction error:', e);
+      aiExtracted = { [nextField]: null };
+    }
+    const value = aiExtracted[nextField];
+
+    if (value !== null && value !== undefined && value !== '') {
+      updateState(state, nextField, value);
+      setSessionState(sessionId, state);
+      // After update, check if more fields needed
+      const nextMissing = getNextMissingField(state, requiredFields);
+      if (!nextMissing) {
+        const pricing = calculatePricing({ [state.service]: state.fields });
+        setSessionState(sessionId, null);
+        return res.json({
+          message: `Here is your configuration for ${state.service.toUpperCase()}:\n${Object.entries(state.fields).map(([k,v]) => `- ${k}: ${v}`).join('\n')}\nTotal Monthly Cost: SAR ${pricing.totalMonthlySAR}`
+        });
+      } else {
+        return res.json({ message: buildPromptForField(nextMissing) });
+      }
+    } else {
+      // If value not found, ask the prompt for this field
+      return res.json({ message: buildPromptForField(nextField) });
+    }
+  } catch (err) {
+    console.error('[AI ROUTE] Unexpected error:', err);
+    return res.status(500).json({ error: 'Internal server error', details: err.message });
+  }
+});
+
+export default router;
 //       arr = Object.entries(config)
 //         .filter(([k, v]) => serviceMap[k] && typeof v === 'object')
 //         .map(([k, v]) => {
@@ -90,84 +141,4 @@
 // routes/ai.js
 // routes/ai.js
 
-const express = require('express');
-const router = express.Router();
-const { extractFieldValue } = require('../services/groqService');
-const { initializeState, updateState, getNextMissingField, isStateComplete } = require('../services/StateManager');
-const { buildPromptForField } = require('../services/PromptBuilder');
-// For demo: use in-memory state. Replace with DB for production.
-const sessionStates = {};
-
-// POST /api/ai/message
-router.post('/message', async (req, res) => {
-  const { sessionId, userMessage } = req.body;
-  if (!sessionId || !userMessage) {
-    return res.status(400).json({ error: 'Missing sessionId or userMessage' });
-  }
-
-  // Load or create state
-  let state = sessionStates[sessionId];
-  if (!state) {
-    // Try to detect service from userMessage (simple keyword match)
-    let service = null;
-    if (/ecs/i.test(userMessage)) service = 'ECS';
-    else if (/oss/i.test(userMessage)) service = 'OSS';
-    else if (/tdsql/i.test(userMessage)) service = 'TDSQL';
-    if (!service) {
-      return res.json({ message: 'Which service would you like to configure? (ECS, OSS, TDSQL)' });
-    }
-    state = initializeState(service);
-    sessionStates[sessionId] = state;
-  }
-
-  // If state is already complete, just return summary
-  if (isStateComplete(state)) {
-    return respondWithSummary(state, res);
-  }
-
-  // Find next missing field
-  const nextField = getNextMissingField(state);
-  if (!nextField) {
-    return respondWithSummary(state, res);
-  }
-
-  // Use Groq to extract value for the next field
-  let extractedValue = null;
-  try {
-    extractedValue = await extractFieldValue(userMessage, nextField);
-    if (extractedValue) {
-      state[nextField] = extractedValue;
-      state.isComplete = isStateComplete(state);
-    }
-  } catch (e) {
-    return res.status(500).json({ error: 'AI extraction failed', details: e.message });
-  }
-
-  // If still incomplete, ask next question
-  if (!state.isComplete) {
-    const nextMissing = getNextMissingField(state);
-    const prompt = buildPromptForField(nextMissing, state);
-    return res.json({ message: prompt, state });
-  }
-
-  // If complete, return summary
-  return respondWithSummary(state, res);
-});
-
-
-// Helper: respond with config and price summary (uses real pricingEngine)
-function respondWithSummary(state, res) {
-  try {
-    const { calculatePrice } = require('../services/pricingEngine');
-    const price = calculatePrice(state);
-    return res.json({
-      message: `Configuration complete for ${state.service}. Monthly cost: SAR ${price.totalMonthlySAR}`,
-      config: state,
-      price
-    });
-  } catch (e) {
-    return res.status(500).json({ error: 'Pricing calculation failed', details: e.message });
-  }
-}
-
-module.exports = router;
+// ...existing ESM code at the top of the file remains. Removed all duplicate and CommonJS code below...

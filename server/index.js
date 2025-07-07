@@ -1,23 +1,23 @@
-const express = require('express');
-const cors = require('cors');
-require('dotenv').config();
+import express from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+// import connectDB from './db.js';
+import aiRouter from './routes/ai.js';
+// import serviceRouter from './routes/services.js';
 
-const connectDB = require('./db');
-const aiRouter = require('./routes/ai');
-const serviceRouter = require('./routes/services'); // ✅ Import your service routes
+dotenv.config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 app.use('/api/ai', aiRouter);
-app.use('/api/services', serviceRouter); // ✅ Mount the router here
+// app.use('/api/services', serviceRouter);
 
-connectDB().then(() => {
-  const PORT =  4000;
-  app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-  });
+
+const PORT = 4000;
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
 });
 
 // Global error handler for logging and returning errors

@@ -1,17 +1,17 @@
-// logic/pricing.js
+// logic/pricing.js (ESM)
 // Pricing logic for ECS, OSS, TDSQL, etc.
 
-const BASE_PRICES = {
+export const BASE_PRICES = {
   ecs: 0.12, // USD/hour per instance
   oss: 0.025, // USD/GB/month
   tdsql: 120, // USD/month per node
 };
-const KSA_MULTIPLIER = 1.6;
-const HOURS_PER_MONTH = 730;
-const USD_TO_SAR = 3.75;
-const VAT_RATE = 0.15;
+export const KSA_MULTIPLIER = 1.6;
+export const HOURS_PER_MONTH = 730;
+export const USD_TO_SAR = 3.75;
+export const VAT_RATE = 0.15;
 
-function calculatePricing(config) {
+export function calculatePricing(config) {
   let subtotalUSD = 0;
   // Support both object (ecs/oss/tdsql) and array (services) input
   if (Array.isArray(config.services)) {
@@ -55,7 +55,7 @@ function calculatePricing(config) {
 }
 
 // New pricing engine for detailed ECS config
-function calculatePrice(config) {
+export function calculatePrice(config) {
   // Base prices (USD)
   const ECS_HOURLY = 0.12;
   const DISK_GB = 0.05; // per GB per month
@@ -87,5 +87,3 @@ function calculatePrice(config) {
     totalMonthlySAR: +totalMonthlySAR.toFixed(2),
   };
 }
-
-module.exports = { calculatePricing, calculatePrice };

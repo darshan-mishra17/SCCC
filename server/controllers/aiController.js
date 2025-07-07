@@ -1,8 +1,9 @@
-const Service = require('../models/Service');
-const axios = require('axios');
-const { calculatePrice } = require('../logic/pricing');
-const { cleanJsonString } = require('./jsonCleanup');
-require('dotenv').config();
+import Service from '../models/Service.js';
+import axios from 'axios';
+import { calculatePrice } from '../logic/pricing.js';
+import { cleanJsonString } from './jsonCleanup.js';
+import dotenv from 'dotenv';
+dotenv.config();
 
 const analyzeServices = async (req, res) => {
   const { userMessage } = req.body;
@@ -133,7 +134,9 @@ Now provide your answer in JSON only.
       console.error('[AI JSON PARSE ERROR]', parseErr, '\nExtracted JSON string:', extracted);
       // Try to repair JSON using jsonrepair
       try {
-        const { repairJsonString } = require('./jsonRepair');
+        // Use ESM import for repairJsonString
+        // Dynamically import to avoid top-level import if needed
+        const { repairJsonString } = await import('./jsonRepair.js');
         const repaired = repairJsonString(extracted);
         console.log('[AI DEBUG] Attempting jsonrepair. Repaired string:', repaired);
         parsedResult = JSON.parse(repaired);
@@ -212,4 +215,4 @@ Now provide your answer in JSON only.
   }
 };
 
-module.exports = { analyzeServices };
+export { analyzeServices };

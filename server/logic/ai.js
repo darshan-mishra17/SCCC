@@ -1,9 +1,9 @@
-// logic/ai.js
+// logic/ai.js (ESM)
 // Mock Groq API integration and config validation
 
-const { getGroqAIResponse } = require('./groq');
+import { getGroqAIResponse } from './groq.js';
 
-async function generateConfig(promptType, inputContext) {
+export async function generateConfig(promptType, inputContext) {
   // Use Groq API for real config
   try {
     return await getGroqAIResponse(promptType, inputContext);
@@ -17,5 +17,3 @@ async function generateConfig(promptType, inputContext) {
     };
   }
 }
-
-module.exports = { generateConfig };

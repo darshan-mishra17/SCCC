@@ -1,7 +1,7 @@
-// Utility to attempt to repair malformed JSON using jsonrepair
-const { jsonrepair } = require('jsonrepair');
+// Utility to attempt to repair malformed JSON using jsonrepair (ESM)
+import { jsonrepair } from 'jsonrepair';
 
-function repairJsonString(str) {
+export function repairJsonString(str) {
   try {
     return jsonrepair(str);
   } catch (e) {
@@ -9,5 +9,3 @@ function repairJsonString(str) {
     return str;
   }
 }
-
-module.exports = { repairJsonString };

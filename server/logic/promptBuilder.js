@@ -1,6 +1,6 @@
 // logic/promptBuilder.js
 
-function buildPrompt(promptType, context) {
+export function buildPrompt(promptType, context) {
   switch (promptType) {
     case 'clarification':
       return `You are an AI cloud solution advisor. The user provided: ${JSON.stringify(context)}. Ask any clarifying questions needed to fully understand the requirements. Respond in structured JSON: { questions: [ ... ] }`;
@@ -14,5 +14,3 @@ function buildPrompt(promptType, context) {
       return `Given: ${JSON.stringify(context)}, respond in structured JSON.`;
   }
 }
-
-module.exports = { buildPrompt };

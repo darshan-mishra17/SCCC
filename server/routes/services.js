@@ -1,9 +1,9 @@
-// routes/services.js
-const express = require('express');
-const router = express.Router();
-const { getAllServices, addService } = require('../controllers/serviceController');
+// routes/services.js (ESM)
+import express from 'express';
+import { getAllServices, addService } from '../controllers/serviceController.js';
 
+const router = express.Router();
 router.get('/', getAllServices);
 router.post('/', addService);
 
-module.exports = router;
+export default router;

@@ -40,4 +40,4 @@ function calculatePrice(state) {
   };
 }
 
-module.exports = { calculatePrice };
+export { calculatePrice };

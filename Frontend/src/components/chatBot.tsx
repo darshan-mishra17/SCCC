@@ -45,7 +45,7 @@ const ChatBot = () => {
     try {
       const res = await axios.post('http://localhost:4000/api/ai/message', { 
         sessionId, 
-        message: userMsg 
+        userMessage: userMsg 
       }, {
         headers: {
           'Content-Type': 'application/json'
@@ -60,6 +60,10 @@ const ChatBot = () => {
         };
         setChat(prev => [...prev, aiMessageObj]);
       }
+      // Show pricing summary if present
+      if (res.data?.pricing && res.data?.config) {
+        setSummary({ config: res.data.config, pricing: res.data.pricing });
+      }
     } catch (err) {
       console.error('API Error:', err);
       const errorMessageObj: ChatMessage = {
@@ -72,6 +76,9 @@ const ChatBot = () => {
       setLoading(false);
     }
   };
+
+  // Pricing summary state
+  const [summary, setSummary] = useState<{ config: any, pricing: any } | null>(null);
 
   return (
     <div className="flex flex-col h-full bg-white rounded-lg shadow p-4">
@@ -92,8 +99,21 @@ const ChatBot = () => {
           </div>
         ))}
         <div ref={chatEndRef} />
+        {/* Pricing summary card */}
+        {summary && (
+          <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg">
+            <div className="font-semibold mb-2 text-green-800">Pricing Summary</div>
+            <div className="mb-2">
+              <span className="font-medium">Configuration:</span>
+              <pre className="bg-gray-100 rounded p-2 text-xs mt-1 overflow-x-auto">{JSON.stringify(summary.config, null, 2)}</pre>
+            </div>
+            <div className="mb-1"><span className="font-medium">Subtotal:</span> {summary.pricing.subtotalSAR} SAR</div>
+            <div className="mb-1"><span className="font-medium">VAT (15%):</span> {summary.pricing.vatSAR} SAR</div>
+            <div className="mb-1"><span className="font-medium">Total Monthly:</span> <span className="text-green-700 font-bold">{summary.pricing.totalMonthlySAR} SAR</span></div>
+          </div>
+        )}
       </div>
-      
+
       <form onSubmit={handleSend} className="flex gap-2 mt-2">
         <textarea
           className="flex-1 resize-none border rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-300 min-h-[40px] max-h-[120px]"

@@ -1,5 +1,5 @@
 // controllers/serviceController.js
-const Service = require('../models/Service');
+import Service from '../models/Service.js';
 
 const getAllServices = async (req, res) => {
   console.log('📡 GET /api/services hit');
@@ -25,7 +25,4 @@ const addService = async (req, res) => {
   }
 };
 
-module.exports = {
-  getAllServices,
-  addService,
-};
+export { getAllServices, addService };

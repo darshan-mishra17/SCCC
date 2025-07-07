@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 
 const serviceSchema = new mongoose.Schema({
   name: String,
@@ -10,4 +10,5 @@ const serviceSchema = new mongoose.Schema({
   defaultEstimatedMonthlyCost: Number,
 });
 
-module.exports = mongoose.model('Service', serviceSchema);
+const Service = mongoose.model('Service', serviceSchema);
+export default Service;

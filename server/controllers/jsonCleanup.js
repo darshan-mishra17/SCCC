@@ -15,4 +15,4 @@ function cleanJsonString(str) {
   return str.trim();
 }
 
-module.exports = { cleanJsonString };
+export { cleanJsonString };
