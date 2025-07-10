@@ -36,9 +36,18 @@ export async function getRequiredFields(serviceName) {
 
 
 // Returns the first required field object that is missing from fields
+
+// A field is only considered filled if it exists and is non-empty/non-null/non-undefined
 export function getNextMissingField(fields, requiredFields) {
   for (const fieldObj of requiredFields) {
-    if (!(fieldObj.key in fields)) return fieldObj;
+    const val = fields[fieldObj.key];
+    if (
+      val === undefined || val === null || val === '' ||
+      (fieldObj.type === 'number' && (isNaN(Number(val)) || val === 'NaN'))
+    ) {
+      return fieldObj;
+    }
+    // Optionally, add more validation for min/max/options here if needed
   }
   return null;
 }
@@ -46,12 +55,29 @@ export function getNextMissingField(fields, requiredFields) {
 
 
 // Update fields with the field key from the field object
+
+// Only update if value is valid (non-empty, non-null, in range for numbers)
 export function updateFields(fields, fieldObj, value) {
-  fields[fieldObj.key] = value;
+  if (value === undefined || value === null || value === '') return;
+  if (fieldObj.type === 'number') {
+    const num = Number(value);
+    if (isNaN(num)) return;
+    if (fieldObj.min !== undefined && num < fieldObj.min) return;
+    if (fieldObj.max !== undefined && num > fieldObj.max) return;
+    fields[fieldObj.key] = num.toString();
+  } else {
+    fields[fieldObj.key] = value;
+  }
 }
 
 
 
 export function isFieldsComplete(fields, requiredFields) {
-  return requiredFields.every(f => f.key in fields);
+  return requiredFields.every(fieldObj => {
+    const val = fields[fieldObj.key];
+    return !(
+      val === undefined || val === null || val === '' ||
+      (fieldObj.type === 'number' && (isNaN(Number(val)) || val === 'NaN'))
+    );
+  });
 }

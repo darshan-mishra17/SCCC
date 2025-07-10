@@ -2,12 +2,12 @@ import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 import { v4 as uuidv4 } from 'uuid';
 
-const ChatBot = () => {
+const ChatBot = ({ onFinalConfig }) => {
   const [sessionId] = useState(() => uuidv4());
   const [chat, setChat] = useState([
     { 
       sender: 'ai', 
-      text: 'Hello! I am your AI Pricing Advisor. Which service would you like to configure? (ECS, OSS, TDSQL)',
+      text: 'Hi! Which service would you like to configure: ECS, OSS, or TDSQL?',
       timestamp: new Date()
     }
   ]);
@@ -48,7 +48,15 @@ const ChatBot = () => {
 
       if (res.data?.message !== undefined) {
         // Debug: log what we're receiving
-        console.log('Received message from backend:', res.data.message, 'Type:', typeof res.data.message);
+        console.log('Received response from backend:', res.data);
+        
+        // Check if configuration is complete
+        if (res.data.complete && res.data.services && res.data.pricing) {
+          console.log('[DEBUG] Configuration complete, calling onFinalConfig');
+          if (onFinalConfig) {
+            onFinalConfig(res.data.services, res.data.pricing);
+          }
+        }
         
         // Aggressively ensure message is always a string
         let messageText;

@@ -1,14 +1,14 @@
 import React from 'react';
 
 type Pricing = {
-  subtotalSAR: number;
-  vatSAR: number;
+  subtotal: number;
+  vat: number;
   totalMonthlySAR: number;
 };
 
 type Service = {
   name: string;
-  config: Record<string, any>;
+  config: Record<string, any> | string;
   monthlyCost: number;
 };
 
@@ -17,7 +17,7 @@ type Props = {
   pricing: Pricing;
 };
 
-const formatConfig = (config: ServiceConfig) => {
+const formatConfig = (config: Record<string, any>) => {
   // Exclude service and isComplete fields
   return Object.entries(config)
     .filter(([k]) => k !== 'service' && k !== 'isComplete')
@@ -59,10 +59,17 @@ const ServiceSummary: React.FC<Props> = ({ services, pricing }) => {
                 {serviceNameMap[service.name.toLowerCase()] || service.name}
               </span>
             </div>
-            <div className="text-gray-500 text-sm mb-1">
-              {Object.entries(service.config).map(([k, v]) => (
-                <span key={k} className="inline-block mr-2">{k}: {v}</span>
-              ))}
+            <div className="text-gray-600 text-sm mb-2">
+              {typeof service.config === 'object' ? (
+                Object.entries(service.config).map(([k, v]) => (
+                  <div key={k} className="flex justify-between">
+                    <span className="font-medium">{k}:</span>
+                    <span>{v}</span>
+                  </div>
+                ))
+              ) : (
+                <span>{service.config}</span>
+              )}
             </div>
             <div className="font-bold text-blue-700 mt-2">Est. SAR {service.monthlyCost}/month</div>
           </div>
@@ -71,11 +78,11 @@ const ServiceSummary: React.FC<Props> = ({ services, pricing }) => {
       <div className="mt-auto bg-white rounded-xl shadow border border-gray-100 p-5 flex flex-col gap-2 sticky bottom-0 z-10">
         <div className="flex justify-between text-gray-700 text-base">
           <span>Subtotal:</span>
-          <span className="font-medium">SAR {pricing.subtotalSAR}</span>
+          <span className="font-medium">SAR {pricing.subtotal}</span>
         </div>
         <div className="flex justify-between text-gray-700 text-base">
           <span>VAT (15%):</span>
-          <span className="font-medium">SAR {pricing.vatSAR}</span>
+          <span className="font-medium">SAR {pricing.vat}</span>
         </div>
         <div className="flex justify-between text-blue-900 font-bold text-2xl mt-2">
           <span>Total Estimated Monthly Cost:</span>
