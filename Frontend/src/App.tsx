@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import Navbar from './components/Navbar';
 import ChatBot from './components/chatBot';
 import SuggestionPanel from './components/SuggestionPanel';
+import FinalQuotationPage from './components/FinalQuotationPage';
 
 interface Service {
   name: string;
@@ -18,10 +19,19 @@ interface Pricing {
 const App: React.FC = () => {
   const [services, setServices] = useState<Service[] | null>(null);
   const [pricing, setPricing] = useState<Pricing | null>(null);
-  const [originalServicesData, setOriginalServicesData] = useState<any[] | null>(null);
+  const [showFinalQuotation, setShowFinalQuotation] = useState(false);
 
-  // Helper function to transform services data and calculate pricing
-  const transformAndCalculateServices = (servicesData: any[]) => {
+  // Handler to receive final config and pricing from ChatBot
+  const handleFinalConfig = (servicesData: any[], pricingData: Pricing) => {
+    console.log('[DEBUG] handleFinalConfig received:', { servicesData, pricingData });
+    console.log('[DEBUG] pricingData properties:', {
+      subtotal: pricingData?.subtotal,
+      vat: pricingData?.vat,
+      totalMonthlySAR: pricingData?.totalMonthlySAR
+    });
+    console.log('[DEBUG] servicesData configs:', servicesData.map(s => ({ name: s.name, config: s.config })));
+    
+    // Calculate correct pricing: sum of service costs = subtotal, then add VAT
     let calculatedSubtotal = 0;
     
     // Transform services data to match SuggestionPanel interface
@@ -124,110 +134,189 @@ const App: React.FC = () => {
       };
     });
     
-    // Calculate VAT (15%) and total
+    // Calculate VAT (15%) and total for the new services
     const calculatedVAT = calculatedSubtotal * 0.15;
     const calculatedTotal = calculatedSubtotal + calculatedVAT;
     
-    // Create corrected pricing object
-    const correctedPricing: Pricing = {
+    console.log('[DEBUG] New services pricing calculation:', {
       subtotal: calculatedSubtotal,
       vat: calculatedVAT,
-      totalMonthlySAR: calculatedTotal
-    };
+      total: calculatedTotal
+    });
     
-    return { transformedServices, correctedPricing };
+    // Append new services to existing ones instead of replacing
+    setServices(prevServices => {
+      const existingServices = prevServices || [];
+      return [...existingServices, ...transformedServices];
+    });
+    
+    // Update pricing to include existing services cost
+    setPricing(prevPricing => {
+      const existingSubtotal = prevPricing?.subtotal || 0;
+      const newSubtotal = existingSubtotal + calculatedSubtotal;
+      const newVAT = newSubtotal * 0.15;
+      const newTotal = newSubtotal + newVAT;
+      
+      return {
+        subtotal: newSubtotal,
+        vat: newVAT,
+        totalMonthlySAR: newTotal
+      };
+    });
   };
 
-  // Handler to delete a service
-  const handleDeleteService = (indexToDelete: number) => {
-    if (!originalServicesData) return;
+  // Handler to delete individual service
+  const deleteService = (index: number) => {
+    if (!services) return;
     
-    // Remove the service from the original data
-    const updatedServicesData = originalServicesData.filter((_, index) => index !== indexToDelete);
+    // Remove service from array
+    const updatedServices = services.filter((_, i) => i !== index);
     
-    // Recalculate everything
-    const { transformedServices, correctedPricing } = transformAndCalculateServices(updatedServicesData);
-    
-    // Update state
-    setOriginalServicesData(updatedServicesData);
-    setServices(transformedServices);
-    setPricing(correctedPricing);
-    
-    console.log('[DEBUG] Service deleted, updated pricing:', correctedPricing);
+    // Recalculate pricing
+    if (updatedServices.length === 0) {
+      // If no services left, reset everything
+      setServices([]);
+      setPricing({ subtotal: 0, vat: 0, totalMonthlySAR: 0 });
+    } else {
+      // Recalculate pricing based on remaining services
+      let newSubtotal = 0;
+      updatedServices.forEach(service => {
+        // Extract price from service.price string (format: "SAR X.XX/month")
+        const priceMatch = service.price.match(/SAR (\d+\.?\d*)/);
+        if (priceMatch) {
+          newSubtotal += parseFloat(priceMatch[1]);
+        }
+      });
+      
+      const newVAT = newSubtotal * 0.15;
+      const newTotal = newSubtotal + newVAT;
+      
+      setServices(updatedServices);
+      setPricing({
+        subtotal: newSubtotal,
+        vat: newVAT,
+        totalMonthlySAR: newTotal
+      });
+    }
   };
 
   // Handler to clear all services
-  const handleClearAllServices = () => {
+  const clearAllServices = () => {
     setServices([]);
-    setPricing(null);
-    setOriginalServicesData([]);
-    console.log('[DEBUG] All services cleared');
+    setPricing({ subtotal: 0, vat: 0, totalMonthlySAR: 0 });
   };
 
-  // Handler to receive final config and pricing from ChatBot
-  const handleFinalConfig = (servicesData: any[], pricingData: Pricing) => {
-    console.log('[DEBUG] handleFinalConfig received:', { servicesData, pricingData });
-    console.log('[DEBUG] pricingData properties:', {
-      subtotal: pricingData?.subtotal,
-      vat: pricingData?.vat,
-      totalMonthlySAR: pricingData?.totalMonthlySAR
-    });
-    console.log('[DEBUG] servicesData configs:', servicesData.map(s => ({ name: s.name, config: s.config })));
+  // Handler for Accept & Finalize button
+  const handleAcceptAndFinalize = async () => {
+    if (!services || !pricing) return;
     
-    // Check if we have existing services to append to
-    const existingServicesData = originalServicesData || [];
+    try {
+      // Transform services data for the Final Quotation Page
+      const transformedData = {
+        services: services.map(service => ({
+          name: service.name,
+          type: service.name, // Using name as type for now
+          specs: service.description,
+          monthlyPrice: parseFloat(service.price.match(/SAR (\d+\.?\d*)/)?.[1] || '0')
+        })),
+        subtotal: pricing.subtotal || 0,
+        vat: pricing.vat || 0,
+        total: pricing.totalMonthlySAR || 0
+      };
+
+      // Save quotation to backend
+      const response = await fetch('/api/quotations', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          services: transformedData.services,
+          pricing: {
+            subtotal: transformedData.subtotal,
+            vat: transformedData.vat,
+            total: transformedData.total
+          },
+          timestamp: new Date().toISOString()
+        })
+      });
+
+      if (response.ok) {
+        console.log('Quotation saved successfully');
+      } else {
+        console.warn('Failed to save quotation, but proceeding to final page');
+      }
+    } catch (error) {
+      console.error('Error saving quotation:', error);
+      // Continue to final page even if save fails
+    }
+
+    // Navigate to Final Quotation Page
+    setShowFinalQuotation(true);
+  };
+
+  // Handler to go back from Final Quotation Page
+  const handleBackToChat = () => {
+    setShowFinalQuotation(false);
+  };
+
+  // Transform current data for Final Quotation Page
+  const getFinalQuotationData = () => {
+    if (!services || !pricing) return undefined;
     
-    // Append new services to existing ones
-    const allServicesData = [...existingServicesData, ...servicesData];
-    
-    console.log('[DEBUG] Appending services. Existing:', existingServicesData.length, 'New:', servicesData.length, 'Total:', allServicesData.length);
-    
-    // Store updated original services data for delete functionality
-    setOriginalServicesData(allServicesData);
-    
-    // Transform and calculate using the helper function with all services
-    const { transformedServices, correctedPricing } = transformAndCalculateServices(allServicesData);
-    
-    console.log('[DEBUG] Corrected pricing calculation:', {
-      subtotal: correctedPricing.subtotal,
-      vat: correctedPricing.vat,
-      total: correctedPricing.totalMonthlySAR
-    });
-    
-    setServices(transformedServices);
-    setPricing(correctedPricing);
+    return {
+      services: services.map(service => ({
+        name: service.name,
+        type: service.name,
+        specs: service.description,
+        monthlyPrice: parseFloat(service.price.match(/SAR (\d+\.?\d*)/)?.[1] || '0')
+      })),
+      subtotal: pricing.subtotal || 0,
+      vat: pricing.vat || 0,
+      total: pricing.totalMonthlySAR || 0
+    };
   };
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col">
-      <Navbar />
-      <div className="flex-1 p-4 md:p-8 mt-[3rem] bg-gray-100 overflow-auto">
-        <div className="container mx-auto grid grid-cols-1 lg:grid-cols-[40%_58%] gap-8">
-          <div className="flex flex-col" style={{ height: 'calc(100vh - 8rem)' }}>
-            <div className="bg-white flex flex-col h-full shadow-lg rounded-lg overflow-hidden border border-gray-200">
-              <div className="p-4 border-b border-gray-200 bg-gray-50">
-                <h2 className="text-lg font-semibold text-gray-800">AI Consultation Chat</h2>
+      {showFinalQuotation ? (
+        <FinalQuotationPage 
+          configData={getFinalQuotationData()}
+          onBack={handleBackToChat}
+        />
+      ) : (
+        <>
+          <Navbar />
+          <div className="flex-1 p-4 md:p-8 mt-[3rem] bg-gray-100 overflow-auto">
+            <div className="container mx-auto grid grid-cols-1 lg:grid-cols-[40%_58%] gap-8">
+              <div className="flex flex-col" style={{ height: 'calc(100vh - 8rem)' }}>
+                <div className="bg-white flex flex-col h-full shadow-lg rounded-lg overflow-hidden border border-gray-200">
+                  <div className="p-4 border-b border-gray-200 bg-gray-50">
+                    <h2 className="text-lg font-semibold text-gray-800">AI Consultation Chat</h2>
+                  </div>
+                  <div className="flex-1 overflow-hidden">
+                    <ChatBot onFinalConfig={handleFinalConfig} />
+                  </div>
+                </div>
               </div>
-              <div className="flex-1 overflow-hidden">
-                <ChatBot onFinalConfig={handleFinalConfig} />
+              <div className="flex flex-col" style={{ height: 'calc(100vh - 8rem)' }}>
+                <SuggestionPanel 
+                  services={services || []}
+                  subtotal={pricing && pricing.subtotal ? `SAR ${pricing.subtotal.toFixed(2)}` : "SAR 0.00"}
+                  vat={pricing && pricing.vat ? `SAR ${pricing.vat.toFixed(2)}` : "SAR 0.00"}
+                  total={pricing && pricing.totalMonthlySAR ? `SAR ${pricing.totalMonthlySAR.toFixed(2)}` : "SAR 0.00"}
+                  onDeleteService={deleteService} // Pass down the delete handler
+                  onClearAll={clearAllServices} // Pass down the clear all handler
+                  onAcceptAndFinalize={handleAcceptAndFinalize} // Pass down the accept handler
+                />
               </div>
             </div>
           </div>
-          <div className="flex flex-col" style={{ height: 'calc(100vh - 8rem)' }}>
-            <SuggestionPanel 
-              services={services || []}
-              subtotal={pricing && pricing.subtotal ? `SAR ${pricing.subtotal.toFixed(2)}` : "SAR 0.00"}
-              vat={pricing && pricing.vat ? `SAR ${pricing.vat.toFixed(2)}` : "SAR 0.00"}
-              total={pricing && pricing.totalMonthlySAR ? `SAR ${pricing.totalMonthlySAR.toFixed(2)}` : "SAR 0.00"}
-              onDeleteService={handleDeleteService}
-              onClearAllServices={handleClearAllServices}
-            />
-          </div>
-        </div>
-      </div>
-      <footer className="bg-gray-800 text-white py-3 text-center text-xs">
-        © 2025 SCCC Alibaba Cloud KSA - AI Pricing & Solution Advisor
-      </footer>
+          <footer className="bg-gray-800 text-white py-3 text-center text-xs">
+            © 2025 SCCC Alibaba Cloud KSA - AI Pricing & Solution Advisor
+          </footer>
+        </>
+      )}
     </div>
   );
 };

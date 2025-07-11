@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import connectDB from './db.js';
 import aiRouter from './routes/ai.js';
+import quotationsRouter from './routes/quotations.js';
 
 // import serviceRouter from './routes/services.js';
 
@@ -31,6 +32,7 @@ app.use(cors());
 app.use(express.json());
 
 app.use('/api/ai', aiRouter);
+app.use('/api/quotations', quotationsRouter);
 // app.use('/api/services', serviceRouter);
 
 
