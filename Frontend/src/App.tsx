@@ -18,18 +18,10 @@ interface Pricing {
 const App: React.FC = () => {
   const [services, setServices] = useState<Service[] | null>(null);
   const [pricing, setPricing] = useState<Pricing | null>(null);
+  const [originalServicesData, setOriginalServicesData] = useState<any[] | null>(null);
 
-  // Handler to receive final config and pricing from ChatBot
-  const handleFinalConfig = (servicesData: any[], pricingData: Pricing) => {
-    console.log('[DEBUG] handleFinalConfig received:', { servicesData, pricingData });
-    console.log('[DEBUG] pricingData properties:', {
-      subtotal: pricingData?.subtotal,
-      vat: pricingData?.vat,
-      totalMonthlySAR: pricingData?.totalMonthlySAR
-    });
-    console.log('[DEBUG] servicesData configs:', servicesData.map(s => ({ name: s.name, config: s.config })));
-    
-    // Calculate correct pricing: sum of service costs = subtotal, then add VAT
+  // Helper function to transform services data and calculate pricing
+  const transformAndCalculateServices = (servicesData: any[]) => {
     let calculatedSubtotal = 0;
     
     // Transform services data to match SuggestionPanel interface
@@ -143,10 +135,63 @@ const App: React.FC = () => {
       totalMonthlySAR: calculatedTotal
     };
     
+    return { transformedServices, correctedPricing };
+  };
+
+  // Handler to delete a service
+  const handleDeleteService = (indexToDelete: number) => {
+    if (!originalServicesData) return;
+    
+    // Remove the service from the original data
+    const updatedServicesData = originalServicesData.filter((_, index) => index !== indexToDelete);
+    
+    // Recalculate everything
+    const { transformedServices, correctedPricing } = transformAndCalculateServices(updatedServicesData);
+    
+    // Update state
+    setOriginalServicesData(updatedServicesData);
+    setServices(transformedServices);
+    setPricing(correctedPricing);
+    
+    console.log('[DEBUG] Service deleted, updated pricing:', correctedPricing);
+  };
+
+  // Handler to clear all services
+  const handleClearAllServices = () => {
+    setServices([]);
+    setPricing(null);
+    setOriginalServicesData([]);
+    console.log('[DEBUG] All services cleared');
+  };
+
+  // Handler to receive final config and pricing from ChatBot
+  const handleFinalConfig = (servicesData: any[], pricingData: Pricing) => {
+    console.log('[DEBUG] handleFinalConfig received:', { servicesData, pricingData });
+    console.log('[DEBUG] pricingData properties:', {
+      subtotal: pricingData?.subtotal,
+      vat: pricingData?.vat,
+      totalMonthlySAR: pricingData?.totalMonthlySAR
+    });
+    console.log('[DEBUG] servicesData configs:', servicesData.map(s => ({ name: s.name, config: s.config })));
+    
+    // Check if we have existing services to append to
+    const existingServicesData = originalServicesData || [];
+    
+    // Append new services to existing ones
+    const allServicesData = [...existingServicesData, ...servicesData];
+    
+    console.log('[DEBUG] Appending services. Existing:', existingServicesData.length, 'New:', servicesData.length, 'Total:', allServicesData.length);
+    
+    // Store updated original services data for delete functionality
+    setOriginalServicesData(allServicesData);
+    
+    // Transform and calculate using the helper function with all services
+    const { transformedServices, correctedPricing } = transformAndCalculateServices(allServicesData);
+    
     console.log('[DEBUG] Corrected pricing calculation:', {
-      subtotal: calculatedSubtotal,
-      vat: calculatedVAT,
-      total: calculatedTotal
+      subtotal: correctedPricing.subtotal,
+      vat: correctedPricing.vat,
+      total: correctedPricing.totalMonthlySAR
     });
     
     setServices(transformedServices);
@@ -174,6 +219,8 @@ const App: React.FC = () => {
               subtotal={pricing && pricing.subtotal ? `SAR ${pricing.subtotal.toFixed(2)}` : "SAR 0.00"}
               vat={pricing && pricing.vat ? `SAR ${pricing.vat.toFixed(2)}` : "SAR 0.00"}
               total={pricing && pricing.totalMonthlySAR ? `SAR ${pricing.totalMonthlySAR.toFixed(2)}` : "SAR 0.00"}
+              onDeleteService={handleDeleteService}
+              onClearAllServices={handleClearAllServices}
             />
           </div>
         </div>
