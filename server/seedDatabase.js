@@ -44,6 +44,14 @@ const services = [
         options: ['1', '5', '10', '50', '100'],
         description: 'Network bandwidth allocation per instance',
         aiQuestion: 'What network bandwidth do you need per instance? Choose from: 1 Mbps, 5 Mbps, 10 Mbps, 50 Mbps, or 100 Mbps.'
+      },
+      {
+        key: 'operatingSystem',
+        label: 'Operating System',
+        type: 'option',
+        options: ['Ubuntu 20.04', 'Ubuntu 22.04', 'CentOS 7', 'CentOS 8', 'Windows Server 2019', 'Windows Server 2022'],
+        description: 'Operating system for the compute instance',
+        aiQuestion: 'Which operating system do you prefer? Choose from: Ubuntu 20.04, Ubuntu 22.04, CentOS 7, CentOS 8, Windows Server 2019, or Windows Server 2022.'
       }
     ],
     pricingModel: 'instance-hours',
@@ -149,7 +157,23 @@ async function seedDatabase() {
 
 // Run if called directly
 if (import.meta.url === `file://${process.argv[1]}`) {
-  seedDatabase();
+  console.log('🌱 Starting database seeding...');
+  const mongoUri = 'mongodb+srv://Sccc:SCCC%40abc123@cluster0.yhomiud.mongodb.net/sccc';
+  console.log('📡 Connecting to MongoDB...');
+  
+  mongoose.connect(mongoUri)
+    .then(() => {
+      console.log('📦 Connected to MongoDB for seeding');
+      return seedDatabase();
+    })
+    .then(() => {
+      console.log('🎉 Seeding completed successfully');
+      process.exit(0);
+    })
+    .catch(error => {
+      console.error('❌ Seeding failed:', error);
+      process.exit(1);
+    });
 }
 
 export { seedDatabase, services };

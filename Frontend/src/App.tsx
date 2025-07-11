@@ -1,12 +1,7 @@
 import React, { useState } from 'react';
 import Navbar from './components/Navbar';
-import ChatPanel from './components/ChatPanel';
+import ChatBot from './components/chatBot';
 import SuggestionPanel from './components/SuggestionPanel';
-
-interface Message {
-  type: 'user' | 'bot';
-  text: string;
-}
 
 interface Service {
   name: string;
@@ -14,64 +9,148 @@ interface Service {
   price: string;
 }
 
+interface Pricing {
+  subtotal?: number;
+  vat?: number;
+  totalMonthlySAR?: number;
+}
+
 const App: React.FC = () => {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      type: 'bot',
-      text: "Hello! I'm your SCCC AI Solution Advisor. Please describe your customer's needs or the problem they are trying to solve."
-    },
-    {
-      type: 'user',
-      text: "I need help setting up an e-commerce backend for a client."
-    },
-    {
-      type: 'bot',
-      text: "Understood. To clarify for the e-commerce backend:\n1. What is the estimated number of SKUs in their product catalog?\n2. What is the anticipated peak order volume per hour?\n3. Are there specific database preferences (e.g., MySQL, PostgreSQL)?\n4. Do they require PCI-DSS compliance for payments?"
-    },
-    {
-      type: 'user',
-      text: "About 500 SKUs, expecting 100 orders/hour peak, MySQL preferred, and yes for PCI compliance."
-    },
-    {
-      type: 'bot',
-      text: "Thank you. Based on this, I recommend the following initial SCCC services. I'll add them to the estimate panel for your review."
-    }
-  ]);
+  const [services, setServices] = useState<Service[] | null>(null);
+  const [pricing, setPricing] = useState<Pricing | null>(null);
 
-  const [inputValue, setInputValue] = useState<string>('');
-
-  const services: Service[] = [
-    {
-      name: "Elastic Compute Service (ECS)",
-      description: "ecs.g6.large, Linux, 40GB System, 100GB Data",
-      price: "SAR 150.00/month"
-    },
-    {
-      name: "Relational Database Service (RDS)",
-      description: "MySQL, rds.mysql.s2.medium, 50GB Storage",
-      price: "SAR 120.00/month"
-    },
-    {
-      name: "Server Load Balancer (SLB)",
-      description: "Application LB, 10 LCUs",
-      price: "SAR 75.00/month"
-    },
-    {
-      name: "Web Application Firewall (WAF)",
-      description: "Pro Edition, 1 Domain",
-      price: "SAR 150.00/month"
-    }
-  ];
-
-  const handleSendMessage = (text: string) => {
-    setMessages(prev => [...prev, { type: 'user', text }]);
+  // Handler to receive final config and pricing from ChatBot
+  const handleFinalConfig = (servicesData: any[], pricingData: Pricing) => {
+    console.log('[DEBUG] handleFinalConfig received:', { servicesData, pricingData });
+    console.log('[DEBUG] pricingData properties:', {
+      subtotal: pricingData?.subtotal,
+      vat: pricingData?.vat,
+      totalMonthlySAR: pricingData?.totalMonthlySAR
+    });
+    console.log('[DEBUG] servicesData configs:', servicesData.map(s => ({ name: s.name, config: s.config })));
     
-    setTimeout(() => {
-      setMessages(prev => [...prev, { 
-        type: 'bot', 
-        text: "Thank you for the information. I'm analyzing your requirements and will update the solution recommendations accordingly." 
-      }]);
-    }, 1000);
+    // Calculate correct pricing: sum of service costs = subtotal, then add VAT
+    let calculatedSubtotal = 0;
+    
+    // Transform services data to match SuggestionPanel interface
+    const transformedServices: Service[] = servicesData.map(service => {
+      // Build detailed description from all collected fields
+      let description = '';
+      if (service.config && typeof service.config === 'object') {
+        const fieldDescriptions: string[] = [];
+        
+        // Format each field with proper labels
+        Object.entries(service.config).forEach(([key, value]) => {
+          if (value !== undefined && value !== null && value !== '') {
+            let label = '';
+            let formattedValue = value;
+            
+            // Convert key to readable label
+            switch (key.toLowerCase()) {
+              case 'instancetype':
+                label = 'Instance Type';
+                break;
+              case 'count':
+              case 'numberofinstances':
+                label = 'Number of Instances';
+                break;
+              case 'disksize':
+              case 'storagesize':
+              case 'storagegb':
+                label = 'Storage Size';
+                formattedValue = `${value} GB`;
+                break;
+              case 'operatingsystem':
+                label = 'Operating System';
+                break;
+              case 'bandwidth':
+                label = 'Bandwidth';
+                formattedValue = `${value} Mbps`;
+                break;
+              case 'region':
+                label = 'Region';
+                break;
+              case 'disktype':
+                label = 'Disk Type';
+                break;
+              case 'storageclass':
+                label = 'Storage Class';
+                break;
+              case 'redundancy':
+                label = 'Redundancy';
+                break;
+              case 'accessfrequency':
+                label = 'Access Frequency';
+                break;
+              case 'databasetype':
+                label = 'Database Type';
+                break;
+              case 'databaseversion':
+                label = 'Database Version';
+                break;
+              case 'cpucores':
+                label = 'CPU Cores';
+                break;
+              case 'engine':
+                label = 'Database Engine';
+                break;
+              case 'nodes':
+                label = 'Number of Database Nodes';
+                break;
+              case 'performancetier':
+                label = 'Performance Tier';
+                break;
+              case 'memory':
+                label = 'Memory';
+                formattedValue = `${value} GB`;
+                break;
+              default:
+                // Convert camelCase to readable format
+                label = key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
+            }
+            
+            fieldDescriptions.push(`${label}: ${formattedValue}`);
+          }
+        });
+        
+        description = fieldDescriptions.join(', ');
+      }
+      
+      // Fallback to simple description if no config fields
+      if (!description) {
+        description = service.description || `${service.config?.instanceType || ''} ${service.config?.operatingSystem || ''}`.trim() || 'Service configuration';
+      }
+      
+      // Add this service's cost to the subtotal
+      const serviceCost = service.monthlyCost || 0;
+      calculatedSubtotal += serviceCost;
+      
+      return {
+        name: service.name || service.service || 'Unknown Service',
+        description: description,
+        price: `SAR ${serviceCost.toFixed(2)}/month`
+      };
+    });
+    
+    // Calculate VAT (15%) and total
+    const calculatedVAT = calculatedSubtotal * 0.15;
+    const calculatedTotal = calculatedSubtotal + calculatedVAT;
+    
+    // Create corrected pricing object
+    const correctedPricing: Pricing = {
+      subtotal: calculatedSubtotal,
+      vat: calculatedVAT,
+      totalMonthlySAR: calculatedTotal
+    };
+    
+    console.log('[DEBUG] Corrected pricing calculation:', {
+      subtotal: calculatedSubtotal,
+      vat: calculatedVAT,
+      total: calculatedTotal
+    });
+    
+    setServices(transformedServices);
+    setPricing(correctedPricing);
   };
 
   return (
@@ -80,19 +159,21 @@ const App: React.FC = () => {
       <div className="flex-1 p-4 md:p-8 mt-[3rem] bg-gray-100 overflow-auto">
         <div className="container mx-auto grid grid-cols-1 lg:grid-cols-[40%_58%] gap-8">
           <div className="flex flex-col" style={{ height: 'calc(100vh - 8rem)' }}>
-            <ChatPanel 
-              messages={messages}
-              onSendMessage={handleSendMessage}
-              inputValue={inputValue}
-              setInputValue={setInputValue}
-            />
+            <div className="bg-white flex flex-col h-full shadow-lg rounded-lg overflow-hidden border border-gray-200">
+              <div className="p-4 border-b border-gray-200 bg-gray-50">
+                <h2 className="text-lg font-semibold text-gray-800">AI Consultation Chat</h2>
+              </div>
+              <div className="flex-1 overflow-hidden">
+                <ChatBot onFinalConfig={handleFinalConfig} />
+              </div>
+            </div>
           </div>
           <div className="flex flex-col" style={{ height: 'calc(100vh - 8rem)' }}>
             <SuggestionPanel 
-              services={services}
-              subtotal="SAR 530.00"
-              vat="SAR 79.50"
-              total="SAR 609.50"
+              services={services || []}
+              subtotal={pricing && pricing.subtotal ? `SAR ${pricing.subtotal.toFixed(2)}` : "SAR 0.00"}
+              vat={pricing && pricing.vat ? `SAR ${pricing.vat.toFixed(2)}` : "SAR 0.00"}
+              total={pricing && pricing.totalMonthlySAR ? `SAR ${pricing.totalMonthlySAR.toFixed(2)}` : "SAR 0.00"}
             />
           </div>
         </div>

@@ -6,7 +6,24 @@ import aiRouter from './routes/ai.js';
 
 // import serviceRouter from './routes/services.js';
 
-dotenv.config();
+dotenv.config({ path: './.env' });
+
+// Temporary hardcoded values to get server running
+if (!process.env.MONGODB_URI) {
+  process.env.MONGODB_URI = 'mongodb+srv://Sccc:SCCC%40abc123@cluster0.yhomiud.mongodb.net/sccc';
+}
+if (!process.env.PORT) {
+  process.env.PORT = '4000';
+}
+if (!process.env.GROQ_API_KEY) {
+  process.env.GROQ_API_KEY = 'placeholder_key_will_use_fallback';
+}
+
+console.log('Environment variables loaded:');
+console.log('MONGODB_URI:', process.env.MONGODB_URI ? '***SET***' : 'UNDEFINED');
+console.log('PORT:', process.env.PORT);
+console.log('GROQ_API_KEY:', process.env.GROQ_API_KEY ? '***SET***' : 'UNDEFINED');
+
 connectDB();
 
 const app = express();

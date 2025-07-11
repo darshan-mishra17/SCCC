@@ -8,6 +8,12 @@ const GROQ_API_URL = process.env.GROQ_API_URL || 'https://api.groq.com/openai/v1
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
 async function getGroqConversationalResponse(prompt) {
+  // Check if GROQ API key is valid format
+  if (!GROQ_API_KEY || !GROQ_API_KEY.startsWith('gsk_') || GROQ_API_KEY.length < 50) {
+    console.log('[DEBUG] Invalid GROQ API key detected, using local fallback');
+    return await getLocalFallbackResponse(prompt);
+  }
+
   try {
     console.log('[DEBUG] AI Prompt being sent:', prompt);
     
@@ -129,6 +135,12 @@ EXAMPLES:
 
 // New specialized function for extracting numeric values from AI responses
 async function getGroqNumericExtraction(prompt) {
+  // Check if GROQ API key is valid format
+  if (!GROQ_API_KEY || !GROQ_API_KEY.startsWith('gsk_') || GROQ_API_KEY.length < 50) {
+    console.log('[DEBUG] Invalid GROQ API key detected, using numeric extraction fallback');
+    return getLocalNumericExtraction(prompt);
+  }
+
   try {
     console.log('[DEBUG] AI Numeric Extraction Prompt:', prompt);
     
@@ -245,6 +257,12 @@ async function getGroqAIResponse(promptType, context) {
 
 // New specialized function for generating clear, complete explanations
 async function getGroqExplanation(prompt) {
+  // Check if GROQ API key is valid format
+  if (!GROQ_API_KEY || !GROQ_API_KEY.startsWith('gsk_') || GROQ_API_KEY.length < 50) {
+    console.log('[DEBUG] Invalid GROQ API key detected, using explanation fallback');
+    return getLocalExplanationFallback(prompt);
+  }
+
   try {
     console.log('[DEBUG] AI Explanation Prompt:', prompt);
     
@@ -255,27 +273,30 @@ async function getGroqExplanation(prompt) {
         messages: [
           { 
             role: 'system', 
-            content: `You are a helpful cloud advisor providing clear, complete explanations. 
+            content: `You are a helpful SCCC cloud advisor providing detailed, technical explanations. 
 
 CRITICAL RULES:
-- Provide complete, helpful explanations (aim for 25-40 words)
-- Be clear, specific, and actionable
-- Focus on practical benefits, use cases, and differences
-- Use simple, customer-friendly language
-- Explain WHY someone would choose each option
+- Provide comprehensive, detailed explanations (aim for 40-80 words)
+- Be specific about technical specifications, performance, and use cases
+- Focus on practical benefits, pricing implications, and when to choose each option
+- Use technical but accessible language
+- Explain performance characteristics, CPU, memory, and ideal workloads
+- Include cost-effectiveness guidance
 - Don't use thinking tags or internal monologue
 - Respond with ONLY the explanation, nothing else
-- Make it immediately useful for decision-making
+- Make it immediately useful for technical decision-making
 
-EXAMPLES:
-- "t6.medium is perfect for small websites and light applications with moderate traffic. g6.xlarge handles heavy workloads, databases, and high-performance applications requiring significant processing power."
-- "MySQL 8.0 offers improved performance, better security features, and advanced analytics capabilities. MySQL 5.7 provides proven stability and compatibility with older applications."
-- "More instances improve reliability by distributing load and providing redundancy, but increase monthly costs. Consider your traffic patterns and uptime requirements."` 
+EXAMPLES for ECS instances:
+- "ecs.g6.large offers 4 vCPUs and 16GB RAM, perfect for medium-scale applications, web servers, and development environments. It provides excellent price-performance balance for general workloads requiring consistent performance without peak demands."
+- "ecs.t6.medium provides 2 vCPUs and 8GB RAM with burstable performance, ideal for small websites, blogs, and light applications with variable traffic. Most cost-effective for low-to-moderate usage patterns."
+- "ecs.c6.xlarge delivers 8 vCPUs optimized for compute-intensive tasks like data processing, scientific computing, and high-performance web servers. Choose when CPU performance is your primary requirement."
+
+For storage/database options, focus on capacity, performance, durability, and use cases.` 
           },
           { role: 'user', content: prompt }
         ],
-        temperature: 0.5, // Balanced for clarity and helpful detail
-        max_tokens: 120 // Allow for more complete explanations
+        temperature: 0.4, // Lower for more consistent technical details
+        max_tokens: 200 // Allow for more detailed explanations
       },
       {
         headers: {
@@ -298,43 +319,128 @@ EXAMPLES:
         .replace(/^(Sure,?|Certainly,?|Of course,?)[\s]*/gi, '')
         // Clean up spacing and formatting
         .replace(/\s+/g, ' ')
-        .replace(/\n+/g, ' ')
         .trim();
       
-      // Remove redundant introductory phrases
-      cleanContent = cleanContent.replace(/^(The key differences? (are|is)|The main differences? (are|is)|Here are the differences?)[\s:]*/gi, '');
-      
-      // Ensure proper punctuation
-      if (cleanContent && !cleanContent.match(/[.!?]$/)) {
-        cleanContent += '.';
-      }
-      
-      // Enforce reasonable word limit (40 words max) but don't truncate mid-sentence
-      const words = cleanContent.split(/\s+/);
-      if (words.length > 40) {
-        // Try to find a natural break point (sentence ending)
-        let truncateAt = 40;
-        for (let i = 35; i < Math.min(40, words.length); i++) {
-          if (words[i] && words[i].match(/[.!?]$/)) {
-            truncateAt = i + 1;
-            break;
-          }
-        }
-        cleanContent = words.slice(0, truncateAt).join(' ');
-        if (!cleanContent.match(/[.!?]$/)) {
-          cleanContent += '.';
-        }
-      }
-      
       console.log('[DEBUG] Cleaned AI explanation:', cleanContent);
-      
-      return cleanContent || 'This option helps configure your service for optimal performance and cost-effectiveness.';
+      return cleanContent || 'I can help explain that option. Could you please be more specific about what you\'d like to know?';
+    } else {
+      console.error('[ERROR] Invalid content type from AI explanation:', typeof content, content);
+      return 'I can provide more details about that option. What specific information would you like to know?';
     }
-    throw new Error('No valid response from Groq');
-  } catch (err) {
-    console.error('[GROQ EXPLANATION ERROR]', err && (err.response?.data || err.stack || err));
-    return 'This field helps configure your service according to your specific requirements and use case.';
+  } catch (error) {
+    console.error('[ERROR] getGroqExplanation failed:', error.message);
+    return 'I can help explain that option, but I\'m having trouble accessing detailed information right now. Please let me know what specific details you need.';
   }
+}
+
+// Local fallback function for when GROQ API is not available
+async function getLocalFallbackResponse(prompt) {
+  console.log('[DEBUG] Using local fallback for prompt:', prompt);
+  
+  // Parse the prompt to understand what kind of response is needed
+  if (prompt.includes('ask for') && prompt.includes('field')) {
+    // This is a field prompt request
+    if (prompt.includes('Instance Type')) {
+      return "What type of instance would work best for you? We have t6.medium, t6.large, g6.large, or g6.xlarge available.";
+    } else if (prompt.includes('Number of Instances')) {
+      return "How many instances do you need? You can choose anywhere from 1 to 50.";
+    } else if (prompt.includes('Operating System')) {
+      return "Which operating system would you prefer? We support Ubuntu 20.04, Ubuntu 18.04, CentOS 7, or Windows Server 2019.";
+    } else if (prompt.includes('Storage Size')) {
+      return "How much storage space do you need? Please specify in GB (minimum 20GB, maximum 16TB).";
+    } else if (prompt.includes('Database Engine')) {
+      return "What database engine would you prefer? We support MySQL 8.0, MySQL 5.7, PostgreSQL 13, or PostgreSQL 12.";
+    } else if (prompt.includes('Storage Type')) {
+      return "What type of storage would you like? We offer Standard, Premium SSD, or Ultra SSD.";
+    } else if (prompt.includes('Bucket Name')) {
+      return "What would you like to name your storage bucket? Please provide a unique name.";
+    } else if (prompt.includes('RAM')) {
+      return "How much RAM do you need? Please specify in GB (e.g., 4GB, 8GB, 16GB).";
+    } else if (prompt.includes('CPU')) {
+      return "How many CPU cores do you need? Please specify the number (e.g., 2, 4, 8).";
+    }
+    return "Please provide the required information for this field.";
+  } else if (prompt.includes('explain') || prompt.includes('help')) {
+    // This is an explanation request
+    if (prompt.includes('ecs.g6.large')) {
+      return "The g6.large instance type offers 4 vCPUs and 16GB RAM, ideal for general workloads with moderate compute requirements. Perfect for web applications, databases, and development environments.";
+    } else if (prompt.includes('ecs.t6.medium')) {
+      return "The t6.medium instance type provides 2 vCPUs and 4GB RAM, suitable for light workloads and applications with variable performance requirements. Cost-effective for small websites and development.";
+    } else if (prompt.includes('mysql')) {
+      return "MySQL is a popular open-source relational database management system, known for its reliability and ease of use. Great for web applications and data-driven projects.";
+    } else if (prompt.includes('postgresql')) {
+      return "PostgreSQL is an advanced open-source relational database with excellent support for complex queries and data types. Ideal for applications requiring robust data integrity and advanced features.";
+    }
+    return "I can provide more information about that option. What specific details would you like to know?";
+  }
+  
+  // Default conversational response
+  return "I understand you're configuring your cloud services. How can I help you with the next step?";
+}
+
+// Local fallback for numeric extraction
+function getLocalNumericExtraction(prompt) {
+  console.log('[DEBUG] Using local numeric extraction for:', prompt);
+  
+  // Extract numbers using regex
+  const numberMatch = prompt.match(/\d+(\.\d+)?/);
+  if (numberMatch) {
+    return numberMatch[0];
+  }
+  
+  return "INVALID";
+}
+
+// Local fallback for explanations
+function getLocalExplanationFallback(prompt) {
+  console.log('[DEBUG] Using local explanation fallback for:', prompt);
+  
+  const lowerPrompt = prompt.toLowerCase();
+  
+  // ECS Instance Types
+  if (lowerPrompt.includes('ecs.g6.large')) {
+    return "The g6.large instance type offers 4 vCPUs and 16GB RAM, optimized for general-purpose workloads. It provides excellent performance for web applications, databases, and development environments. With balanced compute and memory resources, it's cost-effective for medium-scale applications requiring consistent performance.";
+  } else if (lowerPrompt.includes('ecs.g6.xlarge')) {
+    return "The g6.xlarge instance delivers 8 vCPUs and 32GB RAM for high-performance computing needs. Ideal for resource-intensive applications, large databases, and enterprise workloads. Offers superior processing power and memory capacity for demanding applications requiring substantial computational resources.";
+  } else if (lowerPrompt.includes('ecs.t6.medium')) {
+    return "The t6.medium instance provides 2 vCPUs and 4GB RAM with burstable performance capabilities. Perfect for light to moderate workloads, development environments, and small web applications. Cost-efficient solution for applications with variable CPU utilization patterns.";
+  } else if (lowerPrompt.includes('ecs.t6.large')) {
+    return "The t6.large instance offers 4 vCPUs and 8GB RAM with burstable performance features. Suitable for medium workloads, web servers, and development projects. Provides good balance of performance and cost-effectiveness for applications with fluctuating resource demands.";
+  }
+  
+  // Operating Systems
+  else if (lowerPrompt.includes('ubuntu 20.04')) {
+    return "Ubuntu 20.04 LTS is a stable, secure Linux distribution with long-term support until 2025. Features modern kernel, excellent package management, and strong community support. Ideal for web applications, development environments, and cloud-native applications requiring reliability and security.";
+  } else if (lowerPrompt.includes('ubuntu 18.04')) {
+    return "Ubuntu 18.04 LTS provides proven stability and compatibility for legacy applications. While approaching end-of-life, it offers excellent compatibility with older software stacks. Recommended for applications requiring specific package versions or legacy system compatibility.";
+  } else if (lowerPrompt.includes('centos 7')) {
+    return "CentOS 7 is an enterprise-grade Linux distribution based on Red Hat Enterprise Linux. Known for exceptional stability, security, and long-term support. Perfect for production environments, enterprise applications, and systems requiring RHEL compatibility without licensing costs.";
+  } else if (lowerPrompt.includes('windows server 2019')) {
+    return "Windows Server 2019 provides enterprise-grade Windows hosting with advanced security features, Active Directory integration, and .NET framework support. Ideal for Windows-based applications, ASP.NET websites, and environments requiring Windows-specific technologies and enterprise management tools.";
+  }
+  
+  // Database Engines
+  else if (lowerPrompt.includes('mysql 8.0')) {
+    return "MySQL 8.0 is the latest version offering improved performance, enhanced security features, and advanced JSON support. Provides better query optimization, stronger data encryption, and improved replication. Ideal for modern web applications requiring high performance and advanced database features.";
+  } else if (lowerPrompt.includes('mysql 5.7')) {
+    return "MySQL 5.7 is a mature, stable version with proven reliability and broad compatibility. Offers excellent performance for most applications while maintaining compatibility with legacy systems. Recommended for applications requiring established MySQL features without cutting-edge enhancements.";
+  } else if (lowerPrompt.includes('postgresql 13')) {
+    return "PostgreSQL 13 delivers advanced features including parallel queries, improved indexing, and enhanced JSON processing. Offers superior data integrity, complex query optimization, and extensive data type support. Perfect for applications requiring advanced database features, analytics, and data warehousing.";
+  } else if (lowerPrompt.includes('postgresql 12')) {
+    return "PostgreSQL 12 provides robust performance with improved query optimization and enhanced partitioning capabilities. Features strong ACID compliance, advanced indexing, and excellent concurrency handling. Ideal for applications requiring complex queries, data integrity, and sophisticated database operations.";
+  }
+  
+  // Storage Types
+  else if (lowerPrompt.includes('standard')) {
+    return "Standard storage offers cost-effective magnetic disk storage suitable for infrequently accessed data, backups, and archival purposes. Provides reliable storage at lower costs but with moderate performance characteristics. Ideal for applications where cost optimization is prioritized over speed.";
+  } else if (lowerPrompt.includes('premium ssd')) {
+    return "Premium SSD delivers high-performance solid-state storage with excellent IOPS and low latency. Perfect for production databases, high-traffic applications, and workloads requiring consistent fast storage performance. Offers superior reliability and performance compared to standard storage.";
+  } else if (lowerPrompt.includes('ultra ssd')) {
+    return "Ultra SSD provides the highest performance storage with exceptional IOPS, minimal latency, and maximum throughput capabilities. Designed for mission-critical applications, high-performance databases, and enterprise workloads demanding ultimate storage performance. Premium pricing for premium performance.";
+  }
+  
+  // Default explanation
+  return "I can provide more detailed information about that option. The system is currently running in offline mode, but I'm still here to help guide you through your cloud service configuration. What specific aspect would you like me to explain further?";
 }
 
 export { getGroqAIResponse, getGroqConversationalResponse, getGroqNumericExtraction, getGroqExplanation };

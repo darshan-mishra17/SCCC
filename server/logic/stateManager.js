@@ -58,15 +58,37 @@ export function getNextMissingField(fields, requiredFields) {
 
 // Only update if value is valid (non-empty, non-null, in range for numbers)
 export function updateFields(fields, fieldObj, value) {
-  if (value === undefined || value === null || value === '') return;
+  console.log('[DEBUG] updateFields called with:', { fieldKey: fieldObj.key, fieldType: fieldObj.type, value, min: fieldObj.min, max: fieldObj.max });
+  
+  if (value === undefined || value === null || value === '') {
+    console.log('[DEBUG] updateFields: Value is empty, returning');
+    return;
+  }
+  
   if (fieldObj.type === 'number') {
     const num = Number(value);
-    if (isNaN(num)) return;
-    if (fieldObj.min !== undefined && num < fieldObj.min) return;
-    if (fieldObj.max !== undefined && num > fieldObj.max) return;
+    console.log('[DEBUG] updateFields: Converting to number:', num);
+    
+    if (isNaN(num)) {
+      console.log('[DEBUG] updateFields: Value is not a number, returning');
+      return;
+    }
+    
+    if (fieldObj.min !== undefined && num < fieldObj.min) {
+      console.log('[DEBUG] updateFields: Number too small, returning');
+      return;
+    }
+    
+    if (fieldObj.max !== undefined && num > fieldObj.max) {
+      console.log('[DEBUG] updateFields: Number too large, returning');
+      return;
+    }
+    
     fields[fieldObj.key] = num.toString();
+    console.log('[DEBUG] updateFields: Successfully updated field:', fieldObj.key, 'with value:', fields[fieldObj.key]);
   } else {
     fields[fieldObj.key] = value;
+    console.log('[DEBUG] updateFields: Successfully updated text field:', fieldObj.key, 'with value:', value);
   }
 }
 

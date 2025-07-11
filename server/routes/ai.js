@@ -55,6 +55,45 @@ router.post('/message', async (req, res) => {
     chatHistories.get(sessionId).push({ role: 'user', content: userMessage });
 
     let state = getSessionState(sessionId);
+    
+    // Check if user wants to add more services after completion
+    if (state && state.isComplete) {
+      // Detect if user wants to add another service
+      let newServiceNames = [];
+      if (/add.*ecs|more.*ecs|another.*ecs|ecs/i.test(userMessage)) newServiceNames.push('ecs');
+      if (/add.*oss|more.*oss|another.*oss|oss/i.test(userMessage)) newServiceNames.push('oss');
+      if (/add.*tdsql|more.*tdsql|another.*tdsql|tdsql/i.test(userMessage)) newServiceNames.push('tdsql');
+      
+      if (newServiceNames.length > 0) {
+        // Add new services to the existing configuration
+        const existingServices = state.completedServices || [];
+        const newServices = newServiceNames.map(name => ({ name, fields: {}, complete: false }));
+        
+        state = {
+          services: [...state.services, ...newServices],
+          currentServiceIdx: state.services.length,
+          isComplete: false
+        };
+        setSessionState(sessionId, state);
+        
+        const nextServiceName = newServiceNames[0].toUpperCase();
+        const aiMsg = await getGroqConversationalResponse(
+          `Great! Let's add ${nextServiceName} to your configuration. I'll help you configure ${nextServiceName} now.`
+        );
+        const msg = stringifyMessage(aiMsg);
+        chatHistories.get(sessionId).push({ role: 'assistant', content: msg });
+        return res.json({ message: msg });
+      } else {
+        // Not adding a service, handle as general query about completed config
+        const aiMsg = await getGroqConversationalResponse(
+          `The user said: "${userMessage}". Their configuration is complete. Help them with their question or ask if they want to add more services (ECS, OSS, TDSQL) or finalize the current configuration.`
+        );
+        const msg = stringifyMessage(aiMsg);
+        chatHistories.get(sessionId).push({ role: 'assistant', content: msg });
+        return res.json({ message: msg });
+      }
+    }
+    
     // Step 1: Service selection if not started
     if (!state) {
       // Detect multiple services in user message
@@ -160,12 +199,14 @@ router.post('/message', async (req, res) => {
         console.log('[DEBUG] Total pricing:', totalPricing);
         
         // Generate a final summary message
-        const summaryMsg = `Configuration complete! Total monthly cost: ${totalPricing.totalMonthlySAR} SAR (including VAT)`;
+        const summaryMsg = `Configuration complete! Total monthly cost: ${totalPricing.totalMonthlySAR} SAR (including VAT). You can add more services or finalize this configuration.`;
         chatHistories.get(sessionId).push({ role: 'assistant', content: summaryMsg });
         
-        // Clear session
-        setSessionState(sessionId, null);
-        chatHistories.delete(sessionId);
+        // Store the completed configuration temporarily (don't clear session yet)
+        state.completedServices = servicesArr;
+        state.completedPricing = totalPricing;
+        state.isComplete = true;
+        setSessionState(sessionId, state);
         
         return res.json({ 
           message: summaryMsg,
@@ -214,8 +255,63 @@ router.post('/message', async (req, res) => {
       console.log('[DEBUG] User is asking for help/explanation');
       let explanation;
       
-      if (nextFieldObj.options && nextFieldObj.options.length > 0) {
-        // Explain the options for this field with specific context
+      // Check if user is asking about a specific option/value - search across all service fields
+      let specificItem = null;
+      let specificField = null;
+      let serviceContext = currentService.name || 'cloud service';
+      
+      // First, try to extract specific option from user message (like "ecs.g6.large" or just "g6.large")
+      const optionMatch = userMessage.match(/(?:ecs|oss|tdsql)?\.?([a-zA-Z0-9._-]+(?:\.[a-zA-Z0-9._-]+)*)/i);
+      if (optionMatch) {
+        const potentialOption = optionMatch[1];
+        console.log('[DEBUG] Extracted potential option:', potentialOption);
+        
+        // Search through all fields of the current service to find this option
+        for (const field of requiredFields) {
+          if (field.options && field.options.length > 0) {
+            const foundOption = field.options.find(option => 
+              option.toLowerCase().includes(potentialOption.toLowerCase()) ||
+              potentialOption.toLowerCase().includes(option.toLowerCase())
+            );
+            if (foundOption) {
+              specificItem = foundOption;
+              specificField = field;
+              break;
+            }
+          }
+        }
+      }
+      
+      // If no specific option found from pattern, check current field
+      if (!specificItem && nextFieldObj.options && nextFieldObj.options.length > 0) {
+        specificItem = nextFieldObj.options.find(option => 
+          userMessage.toLowerCase().includes(option.toLowerCase())
+        );
+        if (specificItem) {
+          specificField = nextFieldObj;
+        }
+      }
+      
+      if (specificItem && specificField) {
+        // User is asking about a specific option - provide detailed explanation
+        console.log('[DEBUG] User asking about specific item:', specificItem, 'in field:', specificField.key);
+        const fieldContext = specificField.label || specificField.key;
+        
+        // Create more detailed prompt based on the field type
+        let detailedPrompt;
+        if (specificField.key === 'instanceType') {
+          detailedPrompt = `Explain the ECS instance type ${specificItem} in detail. Include: CPU cores, RAM, performance characteristics, ideal workloads, pricing tier (budget/standard/premium), and specific use cases. Compare it briefly to other available options if relevant.`;
+        } else if (specificField.key === 'storageType') {
+          detailedPrompt = `Explain the storage type ${specificItem} for ${serviceContext}. Include: performance characteristics, IOPS, throughput, durability, cost per GB, and ideal use cases. When should customers choose this option?`;
+        } else if (specificField.key === 'databaseEngine') {
+          detailedPrompt = `Explain the database engine ${specificItem} for ${serviceContext}. Include: version features, performance characteristics, compatibility, security features, and ideal use cases. Compare with other available engines if helpful.`;
+        } else {
+          detailedPrompt = `For ${serviceContext}, explain in detail what ${specificItem} means for ${fieldContext.toLowerCase()}. What are its specifications, use cases, performance characteristics, and when should customers choose this option? Be specific and helpful.`;
+        }
+        
+        explanation = await getGroqExplanation(detailedPrompt);
+      } else if (nextFieldObj.options && nextFieldObj.options.length > 0) {
+        // General explanation of all options for this field
         const fieldContext = nextFieldObj.label || nextFieldObj.key;
         const description = nextFieldObj.description || '';
         const units = nextFieldObj.units ? ` (${nextFieldObj.units})` : '';
@@ -385,33 +481,13 @@ router.post('/message', async (req, res) => {
     console.log('[DEBUG] nextFieldObj:', nextFieldObj);
     console.log('[DEBUG] requiredFields:', requiredFields);
     
-    // Option field: robust match user input to available options (trim, lowercase, allow partial)
-    if (nextFieldObj.options && Array.isArray(nextFieldObj.options)) {
-      const userInput = userMessage.trim().toLowerCase();
-      console.log('[DEBUG] Option extraction - userInput:', userInput, 'options:', nextFieldObj.options);
-      // Exact match
-      extractedValue = nextFieldObj.options.find(opt => {
-        const normOpt = opt.trim().toLowerCase();
-        const isExact = normOpt === userInput;
-        if (isExact) console.log('[DEBUG] Exact match:', normOpt, userInput);
-        return isExact;
-      });
-      // Partial match if no exact
-      if (!extractedValue) {
-        extractedValue = nextFieldObj.options.find(opt => {
-          const normOpt = opt.trim().toLowerCase();
-          const isPartial = userInput.includes(normOpt) || normOpt.includes(userInput);
-          if (isPartial) console.log('[DEBUG] Partial match:', normOpt, userInput);
-          return isPartial;
-        });
-      }
-      console.log('[DEBUG] Option extraction result:', extractedValue);
-    } else if (
-      nextFieldObj.type === 'number' ||
-      nextFieldObj.min !== undefined ||
-      nextFieldObj.max !== undefined ||
-      ['count', 'size', 'nodes', 'storageGB', 'diskSize'].includes(nextFieldObj.key)
-    ) {
+    // Check field type first - Number fields take priority
+    if (nextFieldObj.type === 'number' ||
+        nextFieldObj.min !== undefined ||
+        nextFieldObj.max !== undefined ||
+        ['count', 'size', 'nodes', 'storageGB', 'diskSize'].includes(nextFieldObj.key)) {
+      
+      console.log('[DEBUG] Processing as NUMBER field');
       // Extract numbers from anywhere in the message (e.g. "2 instances", "I want 2")
       const numberMatches = userMessage.match(/\d+/g);
       if (numberMatches && numberMatches.length > 0) {
@@ -437,7 +513,31 @@ router.post('/message', async (req, res) => {
       } else {
         console.log('[DEBUG] No number found in user message for numeric field');
       }
+    }
+    // Option field: robust match user input to available options (trim, lowercase, allow partial)
+    else if (nextFieldObj.options && Array.isArray(nextFieldObj.options) && nextFieldObj.options.length > 0) {
+      console.log('[DEBUG] Processing as OPTION field');
+      const userInput = userMessage.trim().toLowerCase();
+      console.log('[DEBUG] Option extraction - userInput:', userInput, 'options:', nextFieldObj.options);
+      // Exact match
+      extractedValue = nextFieldObj.options.find(opt => {
+        const normOpt = opt.trim().toLowerCase();
+        const isExact = normOpt === userInput;
+        if (isExact) console.log('[DEBUG] Exact match:', normOpt, userInput);
+        return isExact;
+      });
+      // Partial match if no exact
+      if (!extractedValue) {
+        extractedValue = nextFieldObj.options.find(opt => {
+          const normOpt = opt.trim().toLowerCase();
+          const isPartial = userInput.includes(normOpt) || normOpt.includes(userInput);
+          if (isPartial) console.log('[DEBUG] Partial match:', normOpt, userInput);
+          return isPartial;
+        });
+      }
+      console.log('[DEBUG] Option extraction result:', extractedValue);
     } else {
+      console.log('[DEBUG] Processing as TEXT field');
       // For text fields, be more permissive but validate
       const trimmed = userMessage.trim();
       if (trimmed.length > 0 && trimmed.length < 200 && 
