@@ -1,8 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Navbar from './components/Navbar';
 import ChatBot from './components/chatBot';
 import SuggestionPanel from './components/SuggestionPanel';
 import FinalQuotationPage from './components/FinalQuotationPage';
+import LandingPage from './components/LandingPage';
+import LoginPage from './components/LoginPage';
+import SignupPage from './components/SignupPage';
+import { authAPI } from './api';
 
 interface Service {
   name: string;
@@ -16,10 +20,105 @@ interface Pricing {
   totalMonthlySAR?: number;
 }
 
+type AppView = 'landing' | 'login' | 'signup' | 'chat' | 'finalQuotation';
+
+interface User {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  company?: string;
+}
+
 const App: React.FC = () => {
+  const [currentView, setCurrentView] = useState<AppView>('landing');
+  const [user, setUser] = useState<User | null>(null);
   const [services, setServices] = useState<Service[] | null>(null);
   const [pricing, setPricing] = useState<Pricing | null>(null);
   const [showFinalQuotation, setShowFinalQuotation] = useState(false);
+
+  // Check for stored authentication on app startup
+  useEffect(() => {
+    const storedUser = localStorage.getItem('user');
+    const authToken = localStorage.getItem('authToken');
+    
+    if (storedUser && authToken) {
+      try {
+        const parsedUser = JSON.parse(storedUser);
+        setUser(parsedUser);
+        setCurrentView('chat');
+      } catch (error) {
+        console.error('Error parsing stored user data:', error);
+        localStorage.removeItem('user');
+        localStorage.removeItem('authToken');
+      }
+    }
+  }, []);
+
+  // Navigation handlers
+  const handleShowLogin = () => setCurrentView('login');
+  const handleShowSignup = () => setCurrentView('signup');
+  const handleShowLanding = () => setCurrentView('landing');
+
+  // Authentication handlers
+  const handleLogin = async (email: string, password: string) => {
+    try {
+      const response = await authAPI.login({ email, password });
+      
+      if (response.success) {
+        setUser(response.user);
+        setCurrentView('chat');
+      } else {
+        alert(response.message || 'Login failed. Please try again.');
+      }
+    } catch (error: any) {
+      console.error('Login failed:', error);
+      const errorMessage = error.response?.data?.message || 'Login failed. Please try again.';
+      alert(errorMessage);
+    }
+  };
+
+  const handleSignup = async (userData: {
+    firstName: string;
+    lastName: string;
+    email: string;
+    company: string;
+    password: string;
+  }) => {
+    try {
+      const response = await authAPI.signup(userData);
+      
+      if (response.success) {
+        setUser(response.user);
+        setCurrentView('chat');
+      } else {
+        alert(response.message || 'Signup failed. Please try again.');
+      }
+    } catch (error: any) {
+      console.error('Signup failed:', error);
+      const errorMessage = error.response?.data?.message || 'Signup failed. Please try again.';
+      alert(errorMessage);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await authAPI.logout();
+    } catch (error) {
+      console.error('Logout error:', error);
+    } finally {
+      setUser(null);
+      setServices(null);
+      setPricing(null);
+      setShowFinalQuotation(false);
+      setCurrentView('landing');
+    }
+  };
+
+  const handleTryAdvisor = () => {
+    // Allow users to try the advisor without signing up
+    setCurrentView('chat');
+  };
 
   // Handler to receive final config and pricing from ChatBot
   const handleFinalConfig = (servicesData: any[], pricingData: Pricing) => {
@@ -253,11 +352,13 @@ const App: React.FC = () => {
 
     // Navigate to Final Quotation Page
     setShowFinalQuotation(true);
+    setCurrentView('chat'); // Keep current view as chat so the conditional logic works
   };
 
   // Handler to go back from Final Quotation Page
   const handleBackToChat = () => {
     setShowFinalQuotation(false);
+    setCurrentView('chat');
   };
 
   // Transform current data for Final Quotation Page
@@ -277,48 +378,93 @@ const App: React.FC = () => {
     };
   };
 
-  return (
-    <div className="min-h-screen bg-gray-100 flex flex-col">
-      {showFinalQuotation ? (
-        <FinalQuotationPage 
-          configData={getFinalQuotationData()}
-          onBack={handleBackToChat}
-        />
-      ) : (
-        <>
-          <Navbar />
-          <div className="flex-1 p-4 md:p-8 mt-[3rem] bg-gray-100 overflow-auto">
-            <div className="container mx-auto grid grid-cols-1 lg:grid-cols-[40%_58%] gap-8">
-              <div className="flex flex-col" style={{ height: 'calc(100vh - 8rem)' }}>
-                <div className="bg-white flex flex-col h-full shadow-lg rounded-lg overflow-hidden border border-gray-200">
-                  <div className="p-4 border-b border-gray-200 bg-gray-50">
-                    <h2 className="text-lg font-semibold text-gray-800">AI Consultation Chat</h2>
-                  </div>
-                  <div className="flex-1 overflow-hidden">
-                    <ChatBot onFinalConfig={handleFinalConfig} />
+  // Render different views based on current state
+  const renderView = () => {
+    switch (currentView) {
+      case 'landing':
+        return (
+          <LandingPage 
+            onLogin={handleShowLogin}
+            onSignup={handleShowSignup}
+            onTryAdvisor={handleTryAdvisor}
+          />
+        );
+
+      case 'login':
+        return (
+          <LoginPage 
+            onLogin={handleLogin}
+            onSwitchToSignup={handleShowSignup}
+            onBack={handleShowLanding}
+          />
+        );
+
+      case 'signup':
+        return (
+          <SignupPage 
+            onSignup={handleSignup}
+            onSwitchToLogin={handleShowLogin}
+            onBack={handleShowLanding}
+          />
+        );
+
+      case 'chat':
+        if (showFinalQuotation) {
+          return (
+            <FinalQuotationPage 
+              configData={getFinalQuotationData()}
+              onBack={handleBackToChat}
+            />
+          );
+        }
+        return (
+          <div className="min-h-screen bg-gray-100 flex flex-col">
+            <Navbar user={user} onLogout={handleLogout} />
+            <div className="flex-1 p-4 md:p-8 mt-[3rem] bg-gray-100 overflow-auto">
+              <div className="container mx-auto grid grid-cols-1 lg:grid-cols-[40%_58%] gap-8">
+                <div className="flex flex-col" style={{ height: 'calc(100vh - 8rem)' }}>
+                  <div className="bg-white flex flex-col h-full shadow-lg rounded-lg overflow-hidden border border-gray-200">
+                    <div className="p-4 border-b border-gray-200 bg-gray-50">
+                      <h2 className="text-lg font-semibold text-gray-800">AI Consultation Chat</h2>
+                    </div>
+                    <div className="flex-1 overflow-hidden">
+                      <ChatBot onFinalConfig={handleFinalConfig} />
+                    </div>
                   </div>
                 </div>
-              </div>
-              <div className="flex flex-col" style={{ height: 'calc(100vh - 8rem)' }}>
-                <SuggestionPanel 
-                  services={services || []}
-                  subtotal={pricing && pricing.subtotal ? `SAR ${pricing.subtotal.toFixed(2)}` : "SAR 0.00"}
-                  vat={pricing && pricing.vat ? `SAR ${pricing.vat.toFixed(2)}` : "SAR 0.00"}
-                  total={pricing && pricing.totalMonthlySAR ? `SAR ${pricing.totalMonthlySAR.toFixed(2)}` : "SAR 0.00"}
-                  onDeleteService={deleteService} // Pass down the delete handler
-                  onClearAll={clearAllServices} // Pass down the clear all handler
-                  onAcceptAndFinalize={handleAcceptAndFinalize} // Pass down the accept handler
-                />
+                <div className="flex flex-col" style={{ height: 'calc(100vh - 8rem)' }}>
+                  <SuggestionPanel 
+                    services={services || []}
+                    subtotal={pricing && pricing.subtotal ? `SAR ${pricing.subtotal.toFixed(2)}` : "SAR 0.00"}
+                    vat={pricing && pricing.vat ? `SAR ${pricing.vat.toFixed(2)}` : "SAR 0.00"}
+                    total={pricing && pricing.totalMonthlySAR ? `SAR ${pricing.totalMonthlySAR.toFixed(2)}` : "SAR 0.00"}
+                    onDeleteService={deleteService}
+                    onClearAll={clearAllServices}
+                    onAcceptAndFinalize={handleAcceptAndFinalize}
+                  />
+                </div>
               </div>
             </div>
+            <footer className="bg-gray-800 text-white py-3 text-center text-xs">
+              © 2025 SCCC Alibaba Cloud KSA - AI Pricing & Solution Advisor
+            </footer>
           </div>
-          <footer className="bg-gray-800 text-white py-3 text-center text-xs">
-            © 2025 SCCC Alibaba Cloud KSA - AI Pricing & Solution Advisor
-          </footer>
-        </>
-      )}
-    </div>
-  );
+        );
+
+      case 'finalQuotation':
+        return (
+          <FinalQuotationPage 
+            configData={getFinalQuotationData()}
+            onBack={handleBackToChat}
+          />
+        );
+
+      default:
+        return <LandingPage onLogin={handleShowLogin} onSignup={handleShowSignup} onTryAdvisor={handleTryAdvisor} />;
+    }
+  };
+
+  return renderView();
 };
 
 export default App;
