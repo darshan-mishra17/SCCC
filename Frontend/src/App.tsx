@@ -6,6 +6,7 @@ import FinalQuotationPage from './components/FinalQuotationPage';
 import LandingPage from './components/LandingPage';
 import LoginPage from './components/LoginPage';
 import SignupPage from './components/SignupPage';
+import UserDashboard from './components/UserDashboard';
 import { authAPI } from './api';
 
 interface Service {
@@ -20,7 +21,7 @@ interface Pricing {
   totalMonthlySAR?: number;
 }
 
-type AppView = 'landing' | 'login' | 'signup' | 'chat' | 'finalQuotation';
+type AppView = 'landing' | 'login' | 'signup' | 'dashboard' | 'chat' | 'finalQuotation';
 
 interface User {
   id: string;
@@ -46,7 +47,7 @@ const App: React.FC = () => {
       try {
         const parsedUser = JSON.parse(storedUser);
         setUser(parsedUser);
-        setCurrentView('chat');
+        setCurrentView('dashboard');
       } catch (error) {
         console.error('Error parsing stored user data:', error);
         localStorage.removeItem('user');
@@ -67,7 +68,7 @@ const App: React.FC = () => {
       
       if (response.success) {
         setUser(response.user);
-        setCurrentView('chat');
+        setCurrentView('dashboard');
       } else {
         alert(response.message || 'Login failed. Please try again.');
       }
@@ -90,7 +91,7 @@ const App: React.FC = () => {
       
       if (response.success) {
         setUser(response.user);
-        setCurrentView('chat');
+        setCurrentView('dashboard');
       } else {
         alert(response.message || 'Signup failed. Please try again.');
       }
@@ -113,6 +114,22 @@ const App: React.FC = () => {
       setShowFinalQuotation(false);
       setCurrentView('landing');
     }
+  };
+
+  // Dashboard handlers
+  const handleStartNewChat = () => {
+    setCurrentView('chat');
+  };
+
+  const handleReopenChat = (sessionId: string) => {
+    // For now, just navigate to chat. In the future, you could load specific session data
+    console.log('Reopening chat session:', sessionId);
+    setCurrentView('chat');
+  };
+
+  const handleViewProfile = () => {
+    // For now, just show an alert. In the future, you could add a profile editing modal
+    alert('Profile editing coming soon!');
   };
 
   const handleTryAdvisor = () => {
@@ -408,6 +425,25 @@ const App: React.FC = () => {
           />
         );
 
+      case 'dashboard':
+        if (!user) {
+          setCurrentView('landing');
+          return null;
+        }
+        return (
+          <UserDashboard
+            user={{
+              name: `${user.firstName} ${user.lastName}`,
+              email: user.email,
+              plan: 'Free' // You can expand this based on user data
+            }}
+            onStartNewChat={handleStartNewChat}
+            onReopenChat={handleReopenChat}
+            onLogout={handleLogout}
+            onViewProfile={handleViewProfile}
+          />
+        );
+
       case 'chat':
         if (showFinalQuotation) {
           return (
@@ -425,7 +461,17 @@ const App: React.FC = () => {
                 <div className="flex flex-col" style={{ height: 'calc(100vh - 8rem)' }}>
                   <div className="bg-white flex flex-col h-full shadow-lg rounded-lg overflow-hidden border border-gray-200">
                     <div className="p-4 border-b border-gray-200 bg-gray-50">
-                      <h2 className="text-lg font-semibold text-gray-800">AI Consultation Chat</h2>
+                      <div className="flex items-center justify-between">
+                        <h2 className="text-lg font-semibold text-gray-800">AI Consultation Chat</h2>
+                        {user && (
+                          <button
+                            onClick={() => setCurrentView('dashboard')}
+                            className="px-3 py-1 text-sm text-orange-600 hover:text-orange-700 hover:bg-orange-50 rounded-md transition-colors"
+                          >
+                            ← Back to Dashboard
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <div className="flex-1 overflow-hidden">
                       <ChatBot onFinalConfig={handleFinalConfig} />

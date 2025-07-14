@@ -5,6 +5,7 @@ import connectDB from './db.js';
 import aiRouter from './routes/ai.js';
 import quotationsRouter from './routes/quotations.js';
 import authRouter from './routes/auth.js';
+import chatRouter from './routes/chat.js';
 
 // import serviceRouter from './routes/services.js';
 
@@ -34,6 +35,7 @@ app.use(express.json());
 
 app.use('/api/ai', aiRouter);
 app.use('/api/auth', authRouter);
+app.use('/api/chat', chatRouter);
 app.use('/api/quotations', quotationsRouter);
 // app.use('/api/services', serviceRouter);
 

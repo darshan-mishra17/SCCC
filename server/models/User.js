@@ -48,6 +48,10 @@ const userSchema = new mongoose.Schema({
   quotations: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Quotation'
+  }],
+  chatSessions: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'ChatSession'
   }]
 }, {
   timestamps: true

@@ -1,4 +1,6 @@
 import express from 'express';
+import { optionalAuth } from '../middleware/auth.js';
+import { saveServiceConfiguration } from '../middleware/chatSession.js';
 
 const router = express.Router();
 
@@ -6,9 +8,9 @@ const router = express.Router();
 const quotations = [];
 
 // Save a new quotation
-router.post('/', async (req, res) => {
+router.post('/', optionalAuth, async (req, res) => {
   try {
-    const { services, pricing, timestamp } = req.body;
+    const { services, pricing, timestamp, sessionId } = req.body;
     
     // Validate required fields
     if (!services || !pricing || !timestamp) {
@@ -23,17 +25,26 @@ router.post('/', async (req, res) => {
       services,
       pricing,
       timestamp,
+      sessionId,
+      userId: req.user?._id,
       createdAt: new Date().toISOString()
     };
 
     // Save quotation (in memory for now)
     quotations.push(quotation);
 
+    // Save to chat session if user is authenticated and sessionId provided
+    if (req.user && sessionId) {
+      await saveServiceConfiguration(sessionId, req.user._id, services, pricing);
+    }
+
     console.log('💾 Quotation saved:', {
       id: quotation.id,
       servicesCount: services.length,
       total: pricing.total,
-      timestamp
+      timestamp,
+      sessionId,
+      userId: req.user?._id
     });
 
     res.status(201).json({

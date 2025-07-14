@@ -3,6 +3,8 @@ import { getGroqAIResponse, getGroqConversationalResponse, getGroqNumericExtract
 import { initializeState, getSessionState, setSessionState, getRequiredFields, getNextMissingField, updateFields, isFieldsComplete } from '../logic/stateManager.js';
 import { buildPromptForField } from '../services/promptBuilder.js';
 import { calculatePricing } from '../logic/pricing.js';
+import { handleChatSession, saveAIResponse, saveServiceConfiguration } from '../middleware/chatSession.js';
+import { optionalAuth } from '../middleware/auth.js';
 
 // Helper to ensure messages are always strings
 function stringifyMessage(msg) {
@@ -39,11 +41,34 @@ const router = express.Router();
 // Add a simple in-memory chat history per session
 const chatHistories = new Map();
 
+// Helper function to send AI response and save to chat session
+async function sendAIResponse(req, res, message, metadata = {}) {
+  const { sessionId } = req.body;
+  const userId = req.user?._id;
+  const processingTime = Date.now() - req.startTime;
+  
+  // Add to in-memory chat history
+  if (sessionId && chatHistories.has(sessionId)) {
+    chatHistories.get(sessionId).push({ role: 'assistant', content: message });
+  }
+  
+  // Save to database if user is authenticated
+  if (userId && sessionId) {
+    await saveAIResponse(sessionId, userId, message, {
+      ...metadata,
+      processingTime
+    });
+  }
+  
+  res.json({ message });
+}
+
 // POST /api/ai/message
 // AI-powered, catalog-driven, dynamic field extraction
 // Debug: log every incoming request to /api/ai/message
-router.post('/message', async (req, res) => {
+router.post('/message', optionalAuth, handleChatSession, async (req, res) => {
   console.log('[DEBUG] Incoming /api/ai/message:', req.body);
+  req.startTime = Date.now();
   try {
     const { sessionId, userMessage } = req.body;
     if (!sessionId || !userMessage) {

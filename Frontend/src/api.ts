@@ -83,6 +83,59 @@ export const authAPI = {
   }
 };
 
+// Chat API functions
+export const chatAPI = {
+  async getSessions(params?: {
+    status?: string;
+    limit?: number;
+    page?: number;
+    search?: string;
+  }) {
+    const response = await axios.get('/api/chat/sessions', { params });
+    return response.data;
+  },
+
+  async createSession(data: { title?: string; tags?: string[] }) {
+    const response = await axios.post('/api/chat/sessions', data);
+    return response.data;
+  },
+
+  async getSession(sessionId: string) {
+    const response = await axios.get(`/api/chat/sessions/${sessionId}`);
+    return response.data;
+  },
+
+  async updateSession(sessionId: string, data: {
+    title?: string;
+    status?: string;
+    services?: any[];
+    pricing?: any;
+    lastMessage?: string;
+  }) {
+    const response = await axios.put(`/api/chat/sessions/${sessionId}`, data);
+    return response.data;
+  },
+
+  async addMessage(sessionId: string, data: {
+    messageType: 'user' | 'ai' | 'system';
+    content: string;
+    metadata?: any;
+  }) {
+    const response = await axios.post(`/api/chat/sessions/${sessionId}/messages`, data);
+    return response.data;
+  },
+
+  async deleteSession(sessionId: string) {
+    const response = await axios.delete(`/api/chat/sessions/${sessionId}`);
+    return response.data;
+  },
+
+  async getStats() {
+    const response = await axios.get('/api/chat/stats');
+    return response.data;
+  }
+};
+
 // 1. Send user prompt to /api/ai
 export async function sendUserPrompt(promptType: string, context: any) {
   const res = await axios.post('/api/ai', {
