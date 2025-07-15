@@ -98,7 +98,7 @@ router.post('/message', optionalAuth, handleChatSession, async (req, res) => {
         
         const confirmationMsg = `Perfect! I'll finalize this configuration for you. 
 
-✅ Configuration Confirmed
+✅ **Configuration Confirmed**
 
 Your recommended services have been processed and are ready for deployment. You can review the final details and pricing in the suggestion panel on the right.
 
@@ -294,7 +294,11 @@ Configuration: ${JSON.stringify(service.config, null, 2)}`
 Next Steps:
 ${suggestion.nextSteps || 'Please confirm if this configuration meets your needs, or let me know if you\'d like to adjust anything.'}
 
-Do you want me to proceed with this configuration?`;
+Do you want me to proceed with this configuration? 
+Reply with:
+- "Yes" to proceed with this setup
+- "Modify" to adjust any service
+- "Manual" to configure services yourself`;
 
       chatHistories.get(sessionId).push({ role: 'assistant', content: responseMsg });
       
@@ -391,88 +395,8 @@ Do you want me to proceed with this configuration?`;
 
     // Handle initial greeting and service selection
     if (!state && sessionHistory.length === 1) {
-      // BUTTON HANDLING: Check for exact button values from frontend
-      if (userMessage === 'manual') {
-        console.log('[DEBUG] User clicked Manual Configuration button');
-        
-        setSessionState(sessionId, {
-          mode: 'manual_configuration',
-          awaitingServiceSelection: true
-        });
-        
-        const manualMsg = `Perfect! Let's configure your services manually. 
-
-🛠️ Manual Configuration Mode
-
-Which services would you like to set up?
-
-Available services:
-• ECS (Elastic Compute Service) - Virtual machines and compute power
-• OSS (Object Storage Service) - File storage and backup  
-• TDSQL (Database Service) - Managed database solutions
-
-Just tell me which ones you need (e.g., "ECS", "OSS", or "ECS and TDSQL").`;
-
-        chatHistories.get(sessionId).push({ role: 'assistant', content: manualMsg });
-        return res.json({ message: manualMsg });
-      }
-      
-      if (userMessage === 'ai_suggestion') {
-        console.log('[DEBUG] User clicked AI Suggestion button');
-        
-        setSessionState(sessionId, { 
-          mode: 'suggestion_gathering',
-          awaitingRequirements: true 
-        });
-        
-        const promptMsg = `Great choice! I'll analyze your requirements and suggest the perfect cloud architecture. 
-
-🤖 AI Suggestion Mode
-
-Please describe your application requirements in detail. The more specific you are, the better I can help!
-
-Examples:
-• "A web application with database for 1000 users"
-• "E-commerce platform with file storage for 5000 customers"  
-• "Live streaming platform with 100 concurrent users per hour"
-• "Mobile app backend with real-time notifications"
-
-What to include:
-• Type of application
-• Expected number of users
-• Key features and functionality  
-• Performance requirements
-
-Go ahead and describe your project! 🚀`;
-
-        chatHistories.get(sessionId).push({ role: 'assistant', content: promptMsg });
-        return res.json({ message: promptMsg });
-      }
-
-      // FIRST: Check if user chose manual configuration in first message
-      if (/option.*1|choice.*1|manual|configure.*myself/i.test(userMessage)) {
-        console.log('[DEBUG] User chose manual configuration in first message');
-        
-        setSessionState(sessionId, {
-          mode: 'manual_configuration',
-          awaitingServiceSelection: true
-        });
-        
-        const manualMsg = `Perfect! Let's configure your services manually. Which services would you like to set up?
-
-Available services:
-- ECS (Elastic Compute Service) - Virtual machines and compute power
-- OSS (Object Storage Service) - File storage and backup  
-- TDSQL (Database Service) - Managed database solutions
-
-Just tell me which ones you need (e.g., "ECS", "OSS", or "ECS and TDSQL").`;
-
-        chatHistories.get(sessionId).push({ role: 'assistant', content: manualMsg });
-        return res.json({ message: manualMsg });
-      }
-      
-      // SECOND: Check if user chose AI suggestions in first message
-      if (/option.*2|choice.*2|ai.*suggest|ai.*recommendation/i.test(userMessage)) {
+      // FIRST: Check if user chose AI suggestions in first message (Option 1)
+      if (/option.*1|choice.*1|ai.*suggest|ai.*recommendation/i.test(userMessage)) {
         console.log('[DEBUG] User chose AI suggestions in first message');
         
         setSessionState(sessionId, { 
@@ -483,168 +407,225 @@ Just tell me which ones you need (e.g., "ECS", "OSS", or "ECS and TDSQL").`;
         const promptMsg = `Great! I'd be happy to suggest the perfect cloud configuration for your needs.
 
 Please describe your application requirements in detail. For example:
-- "A web application with database for 1000 users"
-- "E-commerce platform with file storage for 5000 customers"  
-- "Live streaming platform with 100 concurrent users per hour"
+- Type of application (web app, mobile backend, e-commerce, etc.)
+- Expected number of users or traffic
+- Data storage needs
+- Performance requirements
+- Any specific features or integrations
 
-The more details you provide about your expected users, features, and performance needs, the better I can tailor the recommendations!`;
+The more details you provide, the better I can tailor my recommendations!`;
 
         chatHistories.get(sessionId).push({ role: 'assistant', content: promptMsg });
         return res.json({ message: promptMsg });
       }
       
-      // THIRD: Check if user is directly describing their application (detailed description)
-      const isDetailedDescription = /\b(application|app|website|platform|system|service|project)\b.*\b(users?|customers?|orders?|concurrent|daily|monthly|traffic|visitors?|data|storage|processing|backend|frontend|api|database|real.?time|authentication|payment|e-?commerce|streaming|iot|analytics|mobile|web)\b/i.test(userMessage);
+      // SECOND: Check if user chose manual configuration in first message (Option 2)
+      if (/option.*2|choice.*2|manual|configure.*myself/i.test(userMessage)) {
+        console.log('[DEBUG] User chose manual configuration in first message');
+        
+        setSessionState(sessionId, {
+          mode: 'manual_configuration',
+          awaitingServiceSelection: true
+        });
+        
+        const manualMsg = `Perfect! Let's configure your services manually. Which services would you like to set up?
+
+Available services:
+- **ECS** (Elastic Compute Service) - Virtual machines and compute power
+- **OSS** (Object Storage Service) - File storage and backup  
+- **TDSQL** (Database Service) - Managed database solutions
+
+Just tell me which ones you need (e.g., "ECS", "OSS", or "ECS and TDSQL").`;
+
+        chatHistories.get(sessionId).push({ role: 'assistant', content: manualMsg });
+        return res.json({ message: manualMsg });
+      }
       
-      console.log('[DEBUG] Checking detailed description pattern for:', userMessage);
-      console.log('[DEBUG] isDetailedDescription:', isDetailedDescription);
-      
-      if (isDetailedDescription) {
+      // If user gives an unclear or general first message, show the welcome options
+      const welcomeMsg = `Hi! Welcome to SCCC AI-Powered Cloud Advisor! 🚀
+
+I can help you configure the perfect cloud solution. You have two options:
+
+**Option 1: AI Suggestion**
+Describe your application requirements (e.g., "A web application with database for 1000 users") and I'll suggest the best service combination and configuration for you.
+
+**Option 2: Manual Configuration**
+Tell me which services you'd like to configure:
+• ECS (Elastic Compute Service) - Virtual machines and compute power
+• OSS (Object Storage Service) - File storage and backup
+• TDSQL (Database Service) - Managed database solutions
+
+Which approach would you prefer?`;
+
+      chatHistories.get(sessionId).push({ role: 'assistant', content: welcomeMsg });
+      return res.json({ message: welcomeMsg });
+    }
+    
+    // THIRD: Check if user is directly describing their application (detailed description)
+    const isDetailedDescription = /\b(application|app|website|platform|system|service|project)\b.*\b(users?|customers?|orders?|concurrent|daily|monthly|traffic|visitors?|data|storage|processing|backend|frontend|api|database|real.?time|authentication|payment|e-?commerce|streaming|iot|analytics|mobile|web)\b/i.test(userMessage);
+    
+    console.log('[DEBUG] Checking detailed description pattern for:', userMessage);
+    console.log('[DEBUG] isDetailedDescription:', isDetailedDescription);
+    
+    if (isDetailedDescription) {
         console.log('[DEBUG] User provided detailed application description in first message, processing immediately');
         
-        // Process the application description immediately
-        const aiSuggestion = await getGroqAIResponse('ai_suggestion', userMessage);
-        console.log('[DEBUG] AI Suggestion received:', aiSuggestion);
-        
-        // Parse the AI response
-        let suggestion;
         try {
-          suggestion = typeof aiSuggestion === 'string' ? JSON.parse(aiSuggestion) : aiSuggestion;
-        } catch (e) {
-          console.log('[DEBUG] Failed to parse AI suggestion, using fallback');
-          suggestion = {
-            analysis: "Based on your mobile application requirements with 4,000 users and 100 orders per day, I recommend a balanced setup optimized for performance and reliability.",
-            recommendedServices: [
-              { name: "ecs", reason: "For reliable application hosting with scalable compute power", config: { instanceType: "ecs.g6.xlarge", instanceCount: 3, region: "riyadh", osType: "Linux" }},
-              { name: "tdsql", reason: "For secure order and user data management with high availability", config: { engine: "MySQL 8.0", instanceSize: "large", storageSize: "1000", backupRetention: "7 days" }}
-            ],
-            estimatedCapacity: "400 concurrent users with room for 600 peak traffic",
-            monthlyCost: "~5700 SAR/month",
-            nextSteps: "Please confirm if this configuration meets your needs."
-          };
-        }
-
-        // Calculate real pricing for the suggested services
-        let totalPricing = { subtotal: 0, vat: 0, total: 0 };
-        try {
-          const serviceConfigs = suggestion.recommendedServices || [];
-          const pricingConfig = {};
+          // Process the application description immediately
+          const aiSuggestion = await getGroqAIResponse('ai_suggestion', userMessage);
+          console.log('[DEBUG] AI Suggestion received:', aiSuggestion);
           
-          // Transform service suggestions to pricing config format
-          for (const service of serviceConfigs) {
-            if (service.config && service.name) {
-              pricingConfig[service.name.toLowerCase()] = service.config;
+          // Parse the AI response
+          let suggestion;
+          try {
+            suggestion = typeof aiSuggestion === 'string' ? JSON.parse(aiSuggestion) : aiSuggestion;
+          } catch (e) {
+            console.log('[DEBUG] Failed to parse AI suggestion, using fallback');
+            suggestion = {
+              analysis: "Based on your mobile application requirements with 4,000 users and 100 orders per day, I recommend a balanced setup optimized for performance and reliability.",
+              recommendedServices: [
+                { name: "ecs", reason: "For reliable application hosting with scalable compute power", config: { instanceType: "ecs.g6.xlarge", instanceCount: 3, region: "riyadh", osType: "Linux" }},
+                { name: "tdsql", reason: "For secure order and user data management with high availability", config: { engine: "MySQL 8.0", instanceSize: "large", storageSize: "1000", backupRetention: "7 days" }}
+              ],
+              estimatedCapacity: "400 concurrent users with room for 600 peak traffic",
+              monthlyCost: "~5700 SAR/month",
+              nextSteps: "Please confirm if this configuration meets your needs."
+            };
+          }
+
+          // Calculate real pricing for the suggested services
+          let totalPricing = { subtotal: 0, vat: 0, total: 0 };
+          try {
+            const serviceConfigs = suggestion.recommendedServices || [];
+            const pricingConfig = {};
+            
+            // Transform service suggestions to pricing config format
+            for (const service of serviceConfigs) {
+              if (service.config && service.name) {
+                pricingConfig[service.name.toLowerCase()] = service.config;
+              }
             }
+            
+            console.log('[DEBUG] Pricing config for first message processing:', pricingConfig);
+            
+            if (Object.keys(pricingConfig).length > 0) {
+              const pricing = calculatePricing(pricingConfig);
+              totalPricing.subtotal = pricing.subtotal || pricing.subtotalSAR || 0;
+              totalPricing.vat = pricing.vat || pricing.vatSAR || 0;
+              totalPricing.total = pricing.total || pricing.totalMonthlySAR || 0;
+            }
+          } catch (pricingError) {
+            console.log('[DEBUG] Pricing calculation error:', pricingError);
           }
-          
-          console.log('[DEBUG] Pricing config for first message processing:', pricingConfig);
-          
-          if (Object.keys(pricingConfig).length > 0) {
-            const pricing = calculatePricing(pricingConfig);
-            totalPricing.subtotal = pricing.subtotal || pricing.subtotalSAR || 0;
-            totalPricing.vat = pricing.vat || pricing.vatSAR || 0;
-            totalPricing.total = pricing.total || pricing.totalMonthlySAR || 0;
-          }
-        } catch (pricingError) {
-          console.log('[DEBUG] Pricing calculation error:', pricingError);
-        }
 
-        // Format the response with pricing
-        const responseMsg = `Perfect! Based on your requirements: "${userMessage}"
+          // Format the response with pricing
+          const responseMsg = `Perfect! Based on your requirements: "${userMessage}"
 
- 📊 Recommended Configuration
+## 📊 **Recommended Configuration**
 
-${suggestion.analysis}
+**${suggestion.analysis}**
 
- # Suggested Services:
+### **Suggested Services:**
 
 ${(suggestion.recommendedServices || []).map(service => 
-`${service.name.toUpperCase()} - ${service.reason}
+`**${service.name.toUpperCase()}** - ${service.reason}
 Configuration: ${JSON.stringify(service.config, null, 2)}`
 ).join('\n\n')}
 
- # 📈 Capacity & Performance:
-- Estimated Capacity: ${suggestion.estimatedCapacity}
-- Estimated Monthly Cost: ${totalPricing.total > 0 ? `${totalPricing.total.toFixed(2)} SAR/month (including 15% VAT)` : suggestion.monthlyCost}
+### **📈 Capacity & Performance:**
+- **Estimated Capacity:** ${suggestion.estimatedCapacity}
+- **Estimated Monthly Cost:** ${totalPricing.total > 0 ? `${totalPricing.total.toFixed(2)} SAR/month (including 15% VAT)` : suggestion.monthlyCost}
 
- # 💰 Cost Breakdown:
-- Subtotal: ${totalPricing.subtotal.toFixed(2)} SAR
-- VAT (15%): ${totalPricing.vat.toFixed(2)} SAR
-- Total: ${totalPricing.total.toFixed(2)} SAR/month
+### **💰 Cost Breakdown:**
+- **Subtotal:** ${totalPricing.subtotal.toFixed(2)} SAR
+- **VAT (15%):** ${totalPricing.vat.toFixed(2)} SAR
+- **Total:** ${totalPricing.total.toFixed(2)} SAR/month
 
- # Next Steps:
+### **Next Steps:**
 ${suggestion.nextSteps}
 
-Do you want me to proceed with this configuration? 
+**Do you want me to proceed with this configuration?** 
 Reply with:
-- "Yes" to proceed with this setup
-- "Modify" to adjust any service
-- "Manual" to configure services yourself`;
+- "**Yes**" to proceed with this setup
+- "**Modify**" to adjust any service
+- "**Manual**" to configure services yourself`;
 
-        chatHistories.get(sessionId).push({ role: 'assistant', content: responseMsg });
-        
-        setSessionState(sessionId, { 
-          mode: 'suggestion_provided',
-          suggestedServices: suggestion.recommendedServices,
-          pricing: {
-            subtotal: totalPricing.subtotal,
-            vat: totalPricing.vat,
-            totalMonthlySAR: totalPricing.total
-          },
-          awaitingConfirmation: true 
-        });
+          chatHistories.get(sessionId).push({ role: 'assistant', content: responseMsg });
+          
+          setSessionState(sessionId, { 
+            mode: 'suggestion_provided',
+            suggestedServices: suggestion.recommendedServices,
+            pricing: {
+              subtotal: totalPricing.subtotal,
+              vat: totalPricing.vat,
+              totalMonthlySAR: totalPricing.total
+            },
+            awaitingConfirmation: true 
+          });
 
-        return res.json({ 
-          message: responseMsg,
-          complete: true,
-          services: suggestion.recommendedServices.map(service => {
-            // Calculate individual service cost for first message processing
-            let individualCost = 0;
-            try {
-              const singleServiceConfig = {};
-              singleServiceConfig[service.name.toLowerCase()] = service.config;
-              const servicePrice = calculatePricing(singleServiceConfig);
-              individualCost = servicePrice.subtotalSAR || 0;
-            } catch (error) {
-              console.log('[DEBUG] Error calculating individual service cost for first message:', error);
+          return res.json({ 
+            message: responseMsg,
+            complete: true,
+            services: suggestion.recommendedServices.map(service => {
+              // Calculate individual service cost for first message processing
+              let individualCost = 0;
+              try {
+                const singleServiceConfig = {};
+                singleServiceConfig[service.name.toLowerCase()] = service.config;
+                const servicePrice = calculatePricing(singleServiceConfig);
+                individualCost = servicePrice.subtotalSAR || 0;
+              } catch (error) {
+                console.log('[DEBUG] Error calculating individual service cost for first message:', error);
+              }
+              
+              return {
+                name: service.name,
+                description: service.reason,
+                config: service.config,
+                monthlyCost: individualCost
+              };
+            }),
+            pricing: {
+              subtotal: totalPricing.subtotal,
+              vat: totalPricing.vat,
+              totalMonthlySAR: totalPricing.total
             }
-            
-            return {
-              name: service.name,
-              description: service.reason,
-              config: service.config,
-              monthlyCost: individualCost
-            };
-          }),
-          pricing: {
-            subtotal: totalPricing.subtotal,
-            vat: totalPricing.vat,
-            totalMonthlySAR: totalPricing.total
-          },
-          showButtons: true,
-          buttons: [
-            { text: 'Yes', value: 'yes' },
-            { text: 'Modify', value: 'modify' },
-            { text: 'Manual', value: 'manual' }
-          ]
-        });
+          });
+        } catch (error) {
+          console.log('[DEBUG] Error processing AI suggestion for first message:', error);
+          
+          // Fall back to asking for clarification
+          const fallbackMsg = `I'd be happy to help you with your application requirements! Could you provide a bit more detail about:
+
+- What type of application you're building
+- Expected number of users
+- Any specific performance requirements
+
+This will help me suggest the perfect cloud configuration for your needs!`;
+
+          chatHistories.get(sessionId).push({ role: 'assistant', content: fallbackMsg });
+          return res.json({ message: fallbackMsg });
+        }
       }
       
-      // Default greeting (if no specific choice was made)
-      const initialGreeting = `I can help you configure the perfect cloud solution! 
+      // If user gives an unclear or general first message, show the welcome options
+      const welcomeMsg = `Hi! Welcome to SCCC AI-Powered Cloud Advisor! 🚀
 
-Choose how you'd like to proceed:
+I can help you configure the perfect cloud solution. You have two options:
 
-Option 1: Manual Configuration 
-🛠️ Configure services step-by-step with my guidance
+**Option 1: AI Suggestion**
+Describe your application requirements (e.g., "A web application with database for 1000 users") and I'll suggest the best service combination and configuration for you.
 
-Option 2: AI Suggestion 
-🤖 Describe your requirements and I'll recommend the best setup
+**Option 2: Manual Configuration**
+Tell me which services you'd like to configure:
+• ECS (Elastic Compute Service) - Virtual machines and compute power
+• OSS (Object Storage Service) - File storage and backup
+• TDSQL (Database Service) - Managed database solutions
 
-How would you like to start?`;
+Which approach would you prefer?`;
 
-      chatHistories.get(sessionId).push({ role: 'assistant', content: initialGreeting });
-      return res.json({ message: initialGreeting });
+      chatHistories.get(sessionId).push({ role: 'assistant', content: welcomeMsg });
+      return res.json({ message: welcomeMsg });
     }
 
     // Handle manual configuration mode - database-driven approach
@@ -751,9 +732,9 @@ ${firstField.aiQuestion || firstField.label}`;
           const multiMsg = `I see you want multiple services! Let's configure them one by one.
 
 Which service would you like to configure first?
-- ECS (Elastic Compute Service) - Virtual machines
-- OSS (Object Storage Service) - File storage  
-- TDSQL (Database Service) - Managed databases
+- **ECS** (Elastic Compute Service) - Virtual machines
+- **OSS** (Object Storage Service) - File storage  
+- **TDSQL** (Database Service) - Managed databases
 
 Just tell me which one to start with.`;
 
@@ -813,13 +794,13 @@ Just tell me which one to start with.`;
         if (!isValid) {
           const retryMsg = `${errorMessage}
 
-${currentField.aiQuestion || currentField.label}
+**${currentField.aiQuestion || currentField.label}**
 
 ${currentField.type === 'option' && currentField.options ? 
-`Available options:\n${currentField.options.map(opt => `• ${opt}`).join('\n')}` : ''}
+`**Available options:**\n${currentField.options.map(opt => `• ${opt}`).join('\n')}` : ''}
 
 ${currentField.type === 'number' && (currentField.min || currentField.max) ? 
-`Range: ${currentField.min || 0} - ${currentField.max || 'unlimited'}` : ''}`;
+`**Range:** ${currentField.min || 0} - ${currentField.max || 'unlimited'}` : ''}`;
 
           chatHistories.get(sessionId).push({ role: 'assistant', content: retryMsg });
           return res.json({ message: retryMsg });
@@ -858,7 +839,10 @@ Cost Breakdown:
 - VAT (15%): SAR ${pricing.vatSAR?.toFixed(2) || 0}
 - Total: SAR ${pricing.totalMonthlySAR?.toFixed(2) || 0}
 
-Is this configuration correct?`;          // Get existing configured services from state or initialize empty array
+Is this configuration correct? Reply with:
+- "Yes" to confirm and finalize
+- "Modify" to change the configuration
+- "Add more services" to configure additional services`;          // Get existing configured services from state or initialize empty array
           const existingServices = (state && state.configuredServices) ? state.configuredServices : [];
           
           // Create new service configuration
@@ -894,13 +878,7 @@ Is this configuration correct?`;          // Get existing configured services fr
                 subtotal: pricing.subtotalSAR || 0,
                 vat: pricing.vatSAR || 0,
                 totalMonthlySAR: pricing.totalMonthlySAR || 0
-              },
-              showButtons: true,
-              buttons: [
-                { text: 'Yes', value: 'yes' },
-                { text: 'Modify', value: 'modify' },
-                { text: 'Add more services', value: 'add_more_services' }
-              ]
+              }
             });
             
           } catch (error) {
@@ -1157,34 +1135,34 @@ What type of application are you building and what are your expected usage patte
         // Format the response with pricing
         const responseMsg = `Perfect! Based on your requirements: "${userMessage}"
 
- 📊 Recommended Configuration
+## 📊 **Recommended Configuration**
 
-${suggestion.analysis}
+**${suggestion.analysis}**
 
- # Suggested Services:
+### **Suggested Services:**
 
 ${(suggestion.recommendedServices || []).map(service => 
-`${service.name.toUpperCase()} - ${service.reason}
+`**${service.name.toUpperCase()}** - ${service.reason}
 Configuration: ${JSON.stringify(service.config, null, 2)}`
 ).join('\n\n')}
 
- # 📈 Capacity & Performance:
-- Estimated Capacity: ${suggestion.estimatedCapacity}
-- Estimated Monthly Cost: ${totalPricing.total > 0 ? `${totalPricing.total.toFixed(2)} SAR/month (including 15% VAT)` : suggestion.monthlyCost}
+### **📈 Capacity & Performance:**
+- **Estimated Capacity:** ${suggestion.estimatedCapacity}
+- **Estimated Monthly Cost:** ${totalPricing.total > 0 ? `${totalPricing.total.toFixed(2)} SAR/month (including 15% VAT)` : suggestion.monthlyCost}
 
- # 💰 Cost Breakdown:
-- Subtotal: ${totalPricing.subtotal.toFixed(2)} SAR
-- VAT (15%): ${totalPricing.vat.toFixed(2)} SAR
-- Total: ${totalPricing.total.toFixed(2)} SAR/month
+### **💰 Cost Breakdown:**
+- **Subtotal:** ${totalPricing.subtotal.toFixed(2)} SAR
+- **VAT (15%):** ${totalPricing.vat.toFixed(2)} SAR
+- **Total:** ${totalPricing.total.toFixed(2)} SAR/month
 
- # Next Steps:
+### **Next Steps:**
 ${suggestion.nextSteps}
 
-Do you want me to proceed with this configuration? 
+**Do you want me to proceed with this configuration?** 
 Reply with:
-- "Yes" to proceed with this setup
-- "Modify" to adjust any service
-- "Manual" to configure services yourself`;
+- "**Yes**" to proceed with this setup
+- "**Modify**" to adjust any service
+- "**Manual**" to configure services yourself`;
 
         chatHistories.get(sessionId).push({ role: 'assistant', content: responseMsg });
         
@@ -1212,13 +1190,7 @@ Reply with:
             subtotal: totalPricing.subtotal,
             vat: totalPricing.vat,
             totalMonthlySAR: totalPricing.total
-          },
-          showButtons: true,
-          buttons: [
-            { text: 'Yes', value: 'yes' },
-            { text: 'Modify', value: 'modify' },
-            { text: 'Manual', value: 'manual' }
-          ]
+          }
         });
       }
       
@@ -1237,9 +1209,9 @@ Reply with:
         const manualMsg = `Perfect! Let's configure your services manually. Which services would you like to set up?
 
 Available services:
-- ECS (Elastic Compute Service) - Virtual machines and compute power
-- OSS (Object Storage Service) - File storage and backup  
-- TDSQL (Database Service) - Managed database solutions
+- **ECS** (Elastic Compute Service) - Virtual machines and compute power
+- **OSS** (Object Storage Service) - File storage and backup  
+- **TDSQL** (Database Service) - Managed database solutions
 
 Just tell me which ones you need (e.g., "ECS", "OSS", or "ECS and TDSQL").`;
 

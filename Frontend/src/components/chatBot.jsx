@@ -7,8 +7,13 @@ const ChatBot = ({ onFinalConfig, sessionId: providedSessionId, initialSessionDa
   const [chat, setChat] = useState([
     { 
       sender: 'ai', 
-      text: 'Hi! I\'m your AI-powered pricing advisor. Describe your application requirements and I\'ll suggest the perfect cloud solution with accurate pricing. For example: "I need a mobile app backend for 5000 users" or "E-commerce website with payment processing"',
-      timestamp: new Date()
+      text: 'Hi! Welcome to SCCC AI-Powered Cloud Advisor! 🚀\n\nI can help you configure the perfect cloud solution. Choose how you\'d like to proceed:',
+      timestamp: new Date(),
+      showButtons: true,
+      buttons: [
+        { text: 'Option 1: Manual Configuration', value: 'manual' },
+        { text: 'Option 2: AI Suggestion', value: 'ai_suggestion' }
+      ]
     }
   ]);
   const [userMessage, setUserMessage] = useState('');
@@ -53,6 +58,62 @@ const ChatBot = ({ onFinalConfig, sessionId: providedSessionId, initialSessionDa
       setIsInitialized(true);
     }
   }, [initialSessionData, isInitialized, providedSessionId, onFinalConfig]);
+
+  // Handle button clicks for options
+  const handleButtonClick = async (value, displayText) => {
+    // Hide buttons from the message that was clicked
+    setChat(prev => prev.map(msg => 
+      msg.showButtons ? { ...msg, showButtons: false } : msg
+    ));
+
+    // Add user message showing their selection
+    const userMessageObj = {
+      sender: 'user',
+      text: displayText,
+      timestamp: new Date()
+    };
+
+    setChat(prev => [...prev, userMessageObj]);
+    setLoading(true);
+
+    try {
+      const res = await axios.post('http://localhost:4000/api/ai/message', { 
+        sessionId, 
+        userMessage: value 
+      }, {
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (res.data?.message !== undefined) {
+        const aiResponseObj = {
+          sender: 'ai',
+          text: res.data.message,
+          timestamp: new Date()
+        };
+        setChat(prev => [...prev, aiResponseObj]);
+
+        // Check if AI suggestion is complete
+        if (res.data.complete && res.data.services && res.data.pricing) {
+          console.log('[DEBUG] AI suggestion complete, calling onFinalConfig');
+          if (onFinalConfig) {
+            onFinalConfig(res.data.services, res.data.pricing);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Button click API Error:', err);
+      const errorMessageObj = {
+        sender: 'ai',
+        text: 'Sorry, there was an error processing your selection. Please try again.',
+        timestamp: new Date()
+      };
+      setChat(prev => [...prev, errorMessageObj]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSend = async (e) => {
     e.preventDefault();
@@ -129,7 +190,9 @@ const ChatBot = ({ onFinalConfig, sessionId: providedSessionId, initialSessionDa
         const aiMessageObj = {
           sender: 'ai',
           text: messageText,
-          timestamp: new Date()
+          timestamp: new Date(),
+          showButtons: res.data.showButtons || false,
+          buttons: res.data.buttons || []
         };
         setChat(prev => [...prev, aiMessageObj]);
       }
@@ -191,6 +254,22 @@ const ChatBot = ({ onFinalConfig, sessionId: providedSessionId, initialSessionDa
                 <div className="text-sm whitespace-pre-line leading-relaxed">
                   {typeof msg.text === 'string' ? msg.text : JSON.stringify(msg.text)}
                 </div>
+                
+                {/* Render buttons if this message has them */}
+                {msg.showButtons && msg.buttons && (
+                  <div className="flex flex-col gap-2 mt-3">
+                    {msg.buttons.map((button, buttonIdx) => (
+                      <button
+                        key={buttonIdx}
+                        onClick={() => handleButtonClick(button.value, button.text)}
+                        className="px-3 py-2 text-sm bg-orange-500 hover:bg-orange-600 text-white rounded-lg transition-colors duration-200 text-left"
+                      >
+                        {button.text}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                
                 <div className="text-xs text-gray-500 mt-1">
                   {msg.timestamp?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 </div>
