@@ -212,6 +212,37 @@ What specific changes would you like to make?`;
         };
       }
 
+      // Validate suggested services exist in database
+      try {
+        const availableServices = await Service.find({});
+        const availableServiceNames = availableServices.map(s => s.name);
+        
+        // Filter out any services that don't exist in database
+        const validServices = suggestion.recommendedServices?.filter(service => {
+          const isValid = availableServiceNames.includes(service.name);
+          if (!isValid) {
+            console.log(`[WARNING] AI suggested invalid service: ${service.name}. Available: ${availableServiceNames.join(', ')}`);
+          }
+          return isValid;
+        }) || [];
+        
+        suggestion.recommendedServices = validServices;
+        
+        if (validServices.length === 0) {
+          console.log('[WARNING] No valid services in AI suggestion, using fallback');
+          // Use available services from database for fallback
+          suggestion.recommendedServices = availableServices.slice(0, 2).map(service => ({
+            name: service.name,
+            reason: `${service.displayName} - ${service.description}`,
+            config: service.exampleConfig || {}
+          }));
+        }
+        
+        console.log(`[DEBUG] Validated services: ${suggestion.recommendedServices.map(s => s.name).join(', ')}`);
+      } catch (error) {
+        console.error('[ERROR] Service validation failed:', error);
+      }
+
       // Calculate real pricing for the suggested services
       let totalPricing = { subtotal: 0, vat: 0, total: 0 };
       try {

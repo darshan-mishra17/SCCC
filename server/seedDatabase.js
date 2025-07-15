@@ -55,7 +55,14 @@ const services = [
       }
     ],
     pricingModel: 'instance-hours',
-    unitPriceUSD: 0.05
+    unitPriceUSD: 0.05,
+    exampleConfig: {
+      instanceType: 'ecs.g6.large',
+      count: 2,
+      diskSize: 100,
+      bandwidth: '10',
+      operatingSystem: 'Ubuntu 22.04'
+    }
   },
   {
     name: 'oss',
@@ -89,7 +96,12 @@ const services = [
       }
     ],
     pricingModel: 'storage-gb-month',
-    unitPriceUSD: 0.023
+    unitPriceUSD: 0.023,
+    exampleConfig: {
+      storageGB: 500,
+      redundancy: 'Standard',
+      region: 'Riyadh'
+    }
   },
   {
     name: 'tdsql',
@@ -132,7 +144,14 @@ const services = [
       }
     ],
     pricingModel: 'node-hours',
-    unitPriceUSD: 0.15
+    unitPriceUSD: 0.15,
+    exampleConfig: {
+      engine: 'MySQL 8.0',
+      instanceSize: 'Standard',
+      storageSize: '200',
+      backupRetention: '7 days',
+      performanceTier: 'Standard'
+    }
   }
 ];
 

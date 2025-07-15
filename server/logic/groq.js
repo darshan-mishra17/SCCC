@@ -206,14 +206,14 @@ async function getGroqAIResponse(promptType, context) {
   if (!GROQ_API_KEY || !GROQ_API_KEY.startsWith('gsk_') || GROQ_API_KEY.length < 50) {
     console.log('[DEBUG] Invalid GROQ API key detected, using local AI fallback');
     if (promptType === 'ai_suggestion') {
-      return getLocalAISuggestionFallback(context);
+      return await getLocalAISuggestionFallback(context);
     }
     // For other prompt types, return a basic fallback
     return { error: 'API not available', fallback: true };
   }
 
-  // Use improved prompt builder
-  const prompt = buildPrompt(promptType, context);
+  // Use improved prompt builder (now async)
+  const prompt = await buildPrompt(promptType, context);
   try {
     const response = await axios.post(
       GROQ_API_URL,
@@ -259,7 +259,7 @@ async function getGroqAIResponse(promptType, context) {
     
     // Special handling for AI suggestion fallback
     if (promptType === 'ai_suggestion') {
-      return getLocalAISuggestionFallback(context);
+      return await getLocalAISuggestionFallback(context);
     }
     
     // Retry once if malformed
@@ -502,7 +502,90 @@ function getLocalExplanationFallback(prompt) {
 }
 
 // Intelligent AI suggestion fallback that analyzes user requirements dynamically
-function getLocalAISuggestionFallback(userRequirements) {
+async function getLocalAISuggestionFallback(userRequirements) {
+  console.log('[DEBUG] Using local AI fallback with database services');
+  
+  try {
+    // Import Service model dynamically to avoid circular dependency
+    const { default: Service } = await import('../models/Service.js');
+    const availableServices = await Service.find({});
+    
+    if (availableServices.length === 0) {
+      console.log('[WARNING] No services found in database, using hardcoded fallback');
+      return getHardcodedFallback(userRequirements);
+    }
+    
+    // Analyze requirements and select appropriate services
+    const analysis = analyzeUserRequirements(userRequirements);
+    const selectedServices = selectServicesFromDatabase(availableServices, analysis);
+    
+    return {
+      analysis: `Based on your requirements: "${userRequirements}", I recommend a scalable cloud setup using our available services.`,
+      recommendedServices: selectedServices,
+      estimatedCapacity: analysis.capacity || "Suitable for medium-scale applications",
+      performanceExpectations: analysis.performance || "Good response times and reliability",
+      monthlyCost: analysis.estimatedCost || "Cost-effective solution",
+      scalabilityNotes: analysis.scalability || "Can scale with your business growth",
+      nextSteps: "Please confirm if this configuration meets your needs, or let me know if you'd like to adjust anything."
+    };
+  } catch (error) {
+    console.error('[ERROR] Database fallback failed:', error);
+    return getHardcodedFallback(userRequirements);
+  }
+}
+
+// Select services from database based on requirements
+function selectServicesFromDatabase(availableServices, analysis) {
+  const selectedServices = [];
+  
+  // Always try to include compute service (ECS or similar)
+  const computeService = availableServices.find(s => s.name.toLowerCase().includes('ecs') || s.description.toLowerCase().includes('compute'));
+  if (computeService) {
+    selectedServices.push({
+      name: computeService.name,
+      reason: `${computeService.displayName} for hosting your application with scalable compute power`,
+      config: computeService.exampleConfig || {}
+    });
+  }
+  
+  // Include database service if requirements suggest it
+  if (analysis.needsDatabase) {
+    const dbService = availableServices.find(s => s.name.toLowerCase().includes('tdsql') || s.name.toLowerCase().includes('db') || s.description.toLowerCase().includes('database'));
+    if (dbService) {
+      selectedServices.push({
+        name: dbService.name,
+        reason: `${dbService.displayName} for reliable data storage and management`,
+        config: dbService.exampleConfig || {}
+      });
+    }
+  }
+  
+  // Include storage service
+  const storageService = availableServices.find(s => s.name.toLowerCase().includes('oss') || s.name.toLowerCase().includes('storage'));
+  if (storageService && selectedServices.length < 3) {
+    selectedServices.push({
+      name: storageService.name,
+      reason: `${storageService.displayName} for file storage and static assets`,
+      config: storageService.exampleConfig || {}
+    });
+  }
+  
+  // If still no services, use first available services
+  if (selectedServices.length === 0) {
+    availableServices.slice(0, 2).forEach(service => {
+      selectedServices.push({
+        name: service.name,
+        reason: `${service.displayName} - ${service.description}`,
+        config: service.exampleConfig || {}
+      });
+    });
+  }
+  
+  return selectedServices;
+}
+
+// Hardcoded fallback as last resort
+function getHardcodedFallback(userRequirements) {
   console.log('[DEBUG] Analyzing user requirements:', userRequirements);
   
   // Analyze the user's requirements to determine services and configurations
