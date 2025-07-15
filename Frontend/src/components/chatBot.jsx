@@ -2,8 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 import { v4 as uuidv4 } from 'uuid';
 
-const ChatBot = ({ onFinalConfig }) => {
-  const [sessionId] = useState(() => uuidv4());
+const ChatBot = ({ onFinalConfig, sessionId: providedSessionId, initialSessionData }) => {
+  const [sessionId] = useState(() => providedSessionId || uuidv4());
   const [chat, setChat] = useState([
     { 
       sender: 'ai', 
@@ -13,12 +13,46 @@ const ChatBot = ({ onFinalConfig }) => {
   ]);
   const [userMessage, setUserMessage] = useState('');
   const [loading, setLoading] = useState(false);
+  const [isInitialized, setIsInitialized] = useState(false);
   const chatEndRef = useRef(null);
 
   // Auto-scroll to bottom when chat updates
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chat]);
+
+  // Load initial session data if provided
+  useEffect(() => {
+    if (initialSessionData && !isInitialized) {
+      console.log('ChatBot: Loading session data for session');
+      
+      // Convert messages to chat format
+      if (initialSessionData.messages && Array.isArray(initialSessionData.messages)) {
+        console.log(`Converting ${initialSessionData.messages.length} messages to chat format`);
+        const convertedMessages = initialSessionData.messages.map((msg, index) => {
+          return {
+            sender: msg.messageType === 'user' ? 'user' : 'ai',
+            text: msg.content,
+            timestamp: new Date(msg.createdAt)
+          };
+        });
+        
+        console.log(`Setting chat with ${convertedMessages.length} converted messages`);
+        setChat(convertedMessages);
+      } else {
+        console.log('No messages found or messages is not an array');
+      }
+      
+      // Session restoration is handled by App.tsx directly
+      console.log('Session restoration handled by App component');
+      
+      setIsInitialized(true);
+    } else if (!providedSessionId && !isInitialized) {
+      // New chat session - keep default welcome message
+      console.log('Initializing new chat session');
+      setIsInitialized(true);
+    }
+  }, [initialSessionData, isInitialized, providedSessionId, onFinalConfig]);
 
   const handleSend = async (e) => {
     e.preventDefault();

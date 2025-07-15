@@ -3,7 +3,7 @@ import { getGroqConversationalResponse, getGroqAIResponse } from '../logic/groq.
 import { initializeState, getSessionState, setSessionState, getRequiredFields, getNextMissingField, updateFields, isFieldsComplete } from '../logic/stateManager.js';
 import { calculatePricing } from '../logic/pricing.js';
 import { optionalAuth } from '../middleware/auth.js';
-import { handleChatSession } from '../middleware/chatSession.js';
+import { handleChatSession, saveAIResponse, saveServiceConfiguration } from '../middleware/chatSession.js';
 import Service from '../models/Service.js';
 
 const router = express.Router();
@@ -105,6 +105,31 @@ Your recommended services have been processed and are ready for deployment. You 
 If you need any modifications or have questions about the setup, feel free to ask!`;
 
         chatHistories.get(sessionId).push({ role: 'assistant', content: confirmationMsg });
+        
+        // Save the AI response and service configuration to database
+        if (req.user?._id) {
+          try {
+            await saveAIResponse(sessionId, req.user._id, confirmationMsg, {
+              servicesRecommended: state.suggestedServices,
+              pricing: state.pricing
+            });
+            
+            await saveServiceConfiguration(
+              sessionId, 
+              req.user._id, 
+              state.suggestedServices.map(service => ({
+                name: service.name,
+                description: service.reason,
+                config: service.config,
+                monthlyCost: service.monthlyCost || 0
+              })),
+              state.pricing
+            );
+            console.log('[DEBUG] Configuration saved to database successfully');
+          } catch (saveError) {
+            console.error('[DEBUG] Error saving configuration to database:', saveError);
+          }
+        }
         
         // Send the confirmed configuration to the frontend
         return res.json({ 
@@ -260,6 +285,52 @@ Reply with:
 
       console.log('[DEBUG] AI suggestion received:', JSON.stringify(suggestion, null, 2));
       console.log('[DEBUG] Recommended services:', JSON.stringify(suggestion.recommendedServices, null, 2));
+
+      // Save the AI response and service configuration to database
+      if (req.user?._id) {
+        try {
+          await saveAIResponse(sessionId, req.user._id, responseMsg, {
+            servicesRecommended: suggestion.recommendedServices,
+            pricing: {
+              subtotal: totalPricing.subtotal,
+              vat: totalPricing.vat,
+              totalMonthlySAR: totalPricing.total
+            }
+          });
+          
+          await saveServiceConfiguration(
+            sessionId, 
+            req.user._id, 
+            suggestion.recommendedServices.map(service => {
+              // Calculate individual service cost
+              let individualCost = 0;
+              try {
+                const singleServiceConfig = {};
+                singleServiceConfig[service.name.toLowerCase()] = service.config;
+                const servicePrice = calculatePricing(singleServiceConfig);
+                individualCost = servicePrice.subtotalSAR || 0;
+              } catch (error) {
+                console.log('[DEBUG] Error calculating individual service cost:', error);
+              }
+              
+              return {
+                name: service.name,
+                description: service.reason,
+                config: service.config,
+                monthlyCost: individualCost
+              };
+            }),
+            {
+              subtotal: totalPricing.subtotal,
+              vat: totalPricing.vat,
+              totalMonthlySAR: totalPricing.total
+            }
+          );
+          console.log('[DEBUG] AI suggestion and configuration saved to database successfully');
+        } catch (saveError) {
+          console.error('[DEBUG] Error saving AI suggestion to database:', saveError);
+        }
+      }
 
       return res.json({ 
         message: responseMsg,
@@ -1087,6 +1158,16 @@ Just tell me which ones you need (e.g., "ECS", "OSS", or "ECS and TDSQL").`;
     
     const msg = stringifyMessage(fallbackMsg);
     chatHistories.get(sessionId).push({ role: 'assistant', content: msg });
+    
+    // Save AI response to database for authenticated users
+    if (req.user?._id) {
+      try {
+        await saveAIResponse(sessionId, req.user._id, msg);
+      } catch (saveError) {
+        console.error('[DEBUG] Error saving AI response:', saveError);
+      }
+    }
+    
     return res.json({ message: msg });
 
   } catch (error) {

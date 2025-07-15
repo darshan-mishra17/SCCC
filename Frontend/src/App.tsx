@@ -7,7 +7,7 @@ import LandingPage from './components/LandingPage';
 import LoginPage from './components/LoginPage';
 import SignupPage from './components/SignupPage';
 import UserDashboard from './components/UserDashboard';
-import { authAPI } from './api';
+import { authAPI, chatAPI } from './api';
 
 interface Service {
   name: string;
@@ -37,6 +37,8 @@ const App: React.FC = () => {
   const [services, setServices] = useState<Service[] | null>(null);
   const [pricing, setPricing] = useState<Pricing | null>(null);
   const [showFinalQuotation, setShowFinalQuotation] = useState(false);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [sessionData, setSessionData] = useState<any>(null);
 
   // Check for stored authentication on app startup
   useEffect(() => {
@@ -47,7 +49,8 @@ const App: React.FC = () => {
       try {
         const parsedUser = JSON.parse(storedUser);
         setUser(parsedUser);
-        setCurrentView('dashboard');
+        // Don't automatically redirect to dashboard - stay on landing page
+        // User can choose to go to dashboard from landing page
       } catch (error) {
         console.error('Error parsing stored user data:', error);
         localStorage.removeItem('user');
@@ -118,13 +121,67 @@ const App: React.FC = () => {
 
   // Dashboard handlers
   const handleStartNewChat = () => {
+    // Clear any existing session data for new chat
+    setCurrentSessionId(null);
+    setSessionData(null);
+    setServices(null);
+    setPricing(null);
     setCurrentView('chat');
   };
 
-  const handleReopenChat = (sessionId: string) => {
-    // For now, just navigate to chat. In the future, you could load specific session data
-    console.log('Reopening chat session:', sessionId);
-    setCurrentView('chat');
+  const handleReopenChat = async (sessionId: string) => {
+    try {
+      console.log('Loading chat session:', sessionId);
+      
+      // Load session data from API
+      const response = await chatAPI.getSession(sessionId);
+      
+      if (response.success && response.session) {
+        console.log('Session loaded successfully');
+        
+        // Set session data for ChatBot to use (pass the complete response)
+        setCurrentSessionId(sessionId);
+        setSessionData(response);
+        
+        // If session has services and pricing, restore them to suggestion panel
+        if (response.session.services && response.session.pricing) {
+          console.log('Restoring services and pricing to suggestion panel');
+          
+          // Transform services from database format to SuggestionPanel format
+          const transformedServices = response.session.services.map((service: any) => ({
+            name: service.name || service.type,
+            description: service.description || `${service.name || service.type} service configuration`,
+            price: `SAR ${(service.monthlyCost || 0).toFixed(2)}/month`
+          }));
+          
+          // Transform pricing from database format
+          const transformedPricing = {
+            subtotal: response.session.pricing.subtotal || 0,
+            vat: response.session.pricing.vat || 0,
+            totalMonthlySAR: response.session.pricing.total || response.session.pricing.totalMonthlySAR || 0
+          };
+          
+          setServices(transformedServices);
+          setPricing(transformedPricing);
+          
+          console.log(`Restored ${transformedServices.length} services with total cost SAR ${transformedPricing.totalMonthlySAR.toFixed(2)}`);
+        } else {
+          console.log('No services/pricing to restore - clearing suggestion panel');
+          // Clear services and pricing if session doesn't have them
+          setServices(null);
+          setPricing(null);
+        }
+        
+        // Navigate to chat view
+        setCurrentView('chat');
+      } else {
+        console.error('Failed to load session:', response.message);
+        alert('Failed to load chat session. It may have been deleted.');
+      }
+    } catch (error) {
+      console.error('Error loading chat session:', error);
+      alert('Failed to load chat session. Please try again.');
+    }
   };
 
   const handleViewProfile = () => {
@@ -260,24 +317,14 @@ const App: React.FC = () => {
       total: calculatedTotal
     });
     
-    // Append new services to existing ones instead of replacing
-    setServices(prevServices => {
-      const existingServices = prevServices || [];
-      return [...existingServices, ...transformedServices];
-    });
+    // Set services (replace existing, don't append)
+    setServices(transformedServices);
     
-    // Update pricing to include existing services cost
-    setPricing(prevPricing => {
-      const existingSubtotal = prevPricing?.subtotal || 0;
-      const newSubtotal = existingSubtotal + calculatedSubtotal;
-      const newVAT = newSubtotal * 0.15;
-      const newTotal = newSubtotal + newVAT;
-      
-      return {
-        subtotal: newSubtotal,
-        vat: newVAT,
-        totalMonthlySAR: newTotal
-      };
+    // Set pricing directly from the provided data
+    setPricing({
+      subtotal: calculatedSubtotal,
+      vat: calculatedVAT,
+      totalMonthlySAR: calculatedTotal
     });
   };
 
@@ -486,7 +533,11 @@ const App: React.FC = () => {
                       </div>
                     </div>
                     <div className="flex-1 overflow-hidden">
-                      <ChatBot onFinalConfig={handleFinalConfig} />
+                      <ChatBot 
+                        onFinalConfig={handleFinalConfig} 
+                        sessionId={currentSessionId}
+                        initialSessionData={sessionData}
+                      />
                     </div>
                   </div>
                 </div>

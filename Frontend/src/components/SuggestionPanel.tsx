@@ -52,7 +52,7 @@ const SuggestionPanel: React.FC<SuggestionPanelProps> = ({
                 <div className="flex-1">
                   <h3 className="font-medium text-gray-800 mb-1">{service.name}</h3>
                   <p className="text-sm text-gray-600 mb-2">{service.description}</p>
-                  <p className="text-sm font-medium text-blue-600">Est. {service.price}</p>
+                  <p className="text-sm font-medium text-blue-600">{service.price}</p>
                 </div>
                 <button
                   onClick={() => onDeleteService(index)}
