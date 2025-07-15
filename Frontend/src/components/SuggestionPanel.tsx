@@ -14,9 +14,21 @@ interface SuggestionPanelProps {
   onDeleteService: (index: number) => void;
   onClearAll: () => void;
   onAcceptAndFinalize: () => void;
+  onRequestAlternative?: () => void;
+  onManualAdjust?: (serviceIndex: number) => void;
 }
 
-const SuggestionPanel: React.FC<SuggestionPanelProps> = ({ services, subtotal, vat, total, onDeleteService, onClearAll, onAcceptAndFinalize }) => {
+const SuggestionPanel: React.FC<SuggestionPanelProps> = ({ 
+  services, 
+  subtotal, 
+  vat, 
+  total, 
+  onDeleteService, 
+  onClearAll, 
+  onAcceptAndFinalize,
+  onRequestAlternative,
+  onManualAdjust
+}) => {
   return (
     <div className="bg-white flex flex-col h-full shadow-lg rounded-lg overflow-hidden border border-gray-200">
       <div className="p-4 border-b border-gray-200 bg-gray-50">
@@ -85,17 +97,30 @@ const SuggestionPanel: React.FC<SuggestionPanelProps> = ({ services, subtotal, v
             )}
           </div>
           <div className="flex gap-2">
+            {services.length > 0 && (
+              <>
+                <button 
+                  onClick={onRequestAlternative}
+                  className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-2 rounded-md text-sm font-medium transition-colors border border-gray-400"
+                  title="Request alternative service recommendations"
+                >
+                  Request Alternative
+                </button>
+                <button 
+                  onClick={() => onManualAdjust && onManualAdjust(0)}
+                  className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-2 rounded-md text-sm font-medium transition-colors border border-gray-400"
+                  title="Manually adjust service configurations"
+                >
+                  Manual Adjust
+                </button>
+              </>
+            )}
             <button 
               onClick={onAcceptAndFinalize}
               className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors"
+              disabled={services.length === 0}
             >
               Accept & Finalize
-            </button>
-            <button className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-2 rounded-md text-sm font-medium transition-colors border border-gray-400">
-              Manually Adjust
-            </button>
-            <button className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-2 rounded-md text-sm font-medium transition-colors border border-gray-400">
-              Request Alternative
             </button>
           </div>
         </div>

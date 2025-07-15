@@ -1,74 +1,78 @@
 import express from 'express';
-import { getGroqAIResponse, getGroqConversationalResponse, getGroqNumericExtraction, getGroqExplanation } from '../logic/groq.js';
+import { getGroqConversationalResponse, getGroqAIResponse } from '../logic/groq.js';
 import { initializeState, getSessionState, setSessionState, getRequiredFields, getNextMissingField, updateFields, isFieldsComplete } from '../logic/stateManager.js';
-import { buildPromptForField } from '../services/promptBuilder.js';
 import { calculatePricing } from '../logic/pricing.js';
-import { handleChatSession, saveAIResponse, saveServiceConfiguration } from '../middleware/chatSession.js';
 import { optionalAuth } from '../middleware/auth.js';
-
-// Helper to ensure messages are always strings
-function stringifyMessage(msg) {
-  console.log('[DEBUG] stringifyMessage input:', JSON.stringify(msg, null, 2), 'Type:', typeof msg);
-  if (typeof msg === 'string') {
-    // If it's already the problematic "[object Object]" string, that means something went wrong earlier
-    if (msg === '[object Object]') {
-      console.error('[ERROR] Received [object Object] string - this should not happen');
-      return 'Sorry, there was an error processing the message.';
-    }
-    return msg;
-  }
-  if (typeof msg === 'object' && msg !== null) {
-    console.log('[DEBUG] Object keys:', Object.keys(msg));
-    // Try different possible message properties
-    if (msg.message && typeof msg.message === 'string') return msg.message;
-    if (msg.response && typeof msg.response === 'string') return msg.response;
-    if (msg.question && typeof msg.question === 'string') return msg.question;
-    if (msg.text && typeof msg.text === 'string') return msg.text;
-    if (msg.content && typeof msg.content === 'string') return msg.content;
-    
-    // If no string property found, stringify the whole object
-    const result = JSON.stringify(msg);
-    console.log('[DEBUG] Stringified object result:', result);
-    return result;
-  }
-  const result = String(msg);
-  console.log('[DEBUG] String conversion result:', result);
-  return result;
-}
+import { handleChatSession } from '../middleware/chatSession.js';
+import Service from '../models/Service.js';
 
 const router = express.Router();
 
-// Add a simple in-memory chat history per session
+// Global chat histories for sessions
 const chatHistories = new Map();
 
-// Helper function to send AI response and save to chat session
-async function sendAIResponse(req, res, message, metadata = {}) {
-  const { sessionId } = req.body;
-  const userId = req.user?._id;
-  const processingTime = Date.now() - req.startTime;
-  
-  // Add to in-memory chat history
-  if (sessionId && chatHistories.has(sessionId)) {
-    chatHistories.get(sessionId).push({ role: 'assistant', content: message });
+// Helper function to stringify messages
+function stringifyMessage(msg) {
+  if (typeof msg === 'string') return msg;
+  if (msg && typeof msg === 'object') {
+    return msg.message || msg.text || msg.content || JSON.stringify(msg);
   }
-  
-  // Save to database if user is authenticated
-  if (userId && sessionId) {
-    await saveAIResponse(sessionId, userId, message, {
-      ...metadata,
-      processingTime
-    });
-  }
-  
-  res.json({ message });
+  return String(msg || '');
 }
 
-// POST /api/ai/message
-// AI-powered, catalog-driven, dynamic field extraction
-// Debug: log every incoming request to /api/ai/message
+// Helper function to parse ECS configuration from user input
+function parseECSConfiguration(userMessage) {
+  console.log('[DEBUG] Parsing ECS configuration from:', userMessage);
+  
+  const config = {
+    instanceType: 'ecs.g6.large', // default
+    instanceCount: 1, // default
+    osType: 'Linux', // default
+    region: 'riyadh',
+    diskSize: 100 // default
+  };
+  
+  // Parse instance type
+  const instanceTypeMatch = userMessage.match(/ecs\.(g6|c6|r6|m6)\.(large|xlarge|2xlarge|4xlarge)/i);
+  if (instanceTypeMatch) {
+    config.instanceType = `ecs.${instanceTypeMatch[1].toLowerCase()}.${instanceTypeMatch[2].toLowerCase()}`;
+  }
+  
+  // Parse instance count
+  const countMatch = userMessage.match(/(\d+)\s*(instances?|vms?|machines?|servers?)/i);
+  if (countMatch) {
+    config.instanceCount = parseInt(countMatch[1]);
+  }
+  
+  // Parse OS type
+  if (/windows/i.test(userMessage)) {
+    config.osType = 'Windows';
+  } else if (/linux/i.test(userMessage)) {
+    config.osType = 'Linux';
+  }
+  
+  // Parse disk size
+  const diskMatch = userMessage.match(/(\d+)\s*gb.*disk/i);
+  if (diskMatch) {
+    config.diskSize = parseInt(diskMatch[1]);
+  }
+  
+  // Check if we have enough information
+  const hasBasicInfo = userMessage.length > 10 && 
+    (instanceTypeMatch || countMatch || /linux|windows/i.test(userMessage) || diskMatch);
+  
+  console.log('[DEBUG] Parsed ECS config:', config, 'hasBasicInfo:', hasBasicInfo);
+  
+  return hasBasicInfo ? config : null;
+}
+
+// @route POST /api/ai/message
+// @desc Handle AI chat messages with enhanced suggestion system
+// @access Public (with optional auth)
 router.post('/message', optionalAuth, handleChatSession, async (req, res) => {
   console.log('[DEBUG] Incoming /api/ai/message:', req.body);
   req.startTime = Date.now();
+  
   try {
     const { sessionId, userMessage } = req.body;
     if (!sessionId || !userMessage) {
@@ -80,788 +84,1015 @@ router.post('/message', optionalAuth, handleChatSession, async (req, res) => {
     chatHistories.get(sessionId).push({ role: 'user', content: userMessage });
 
     let state = getSessionState(sessionId);
+    const sessionHistory = chatHistories.get(sessionId) || [];
     
-    // Check if user wants to add more services after completion
-    if (state && state.isComplete) {
-      // Detect if user wants to add another service
-      let newServiceNames = [];
-      if (/add.*ecs|more.*ecs|another.*ecs|ecs/i.test(userMessage)) newServiceNames.push('ecs');
-      if (/add.*oss|more.*oss|another.*oss|oss/i.test(userMessage)) newServiceNames.push('oss');
-      if (/add.*tdsql|more.*tdsql|another.*tdsql|tdsql/i.test(userMessage)) newServiceNames.push('tdsql');
+    console.log('[DEBUG] Session state:', state);
+    console.log('[DEBUG] Session history length:', sessionHistory.length);
+
+    // Handle confirmation for AI suggestions (when user says "yes")
+    if (state && state.mode === 'suggestion_provided' && state.awaitingConfirmation) {
+      console.log('[DEBUG] Checking for confirmation response');
       
-      if (newServiceNames.length > 0) {
-        // Add new services to the existing configuration
-        const existingServices = state.completedServices || [];
-        const newServices = newServiceNames.map(name => ({ name, fields: {}, complete: false }));
+      if (/^yes|^y$|^ok|^okay|^proceed|^confirm|^accept/i.test(userMessage.trim())) {
+        console.log('[DEBUG] User confirmed the suggestion, proceeding with configuration');
         
-        state = {
-          services: [...state.services, ...newServices],
-          currentServiceIdx: state.services.length,
-          isComplete: false
+        const confirmationMsg = `Perfect! I'll finalize this configuration for you. 
+
+✅ **Configuration Confirmed**
+
+Your recommended services have been processed and are ready for deployment. You can review the final details and pricing in the suggestion panel on the right.
+
+If you need any modifications or have questions about the setup, feel free to ask!`;
+
+        chatHistories.get(sessionId).push({ role: 'assistant', content: confirmationMsg });
+        
+        // Send the confirmed configuration to the frontend
+        return res.json({ 
+          message: confirmationMsg,
+          complete: true,
+          services: state.suggestedServices.map(service => ({
+            name: service.name,
+            description: service.reason,
+            config: service.config,
+            monthlyCost: service.monthlyCost || 0
+          })),
+          pricing: state.pricing || {
+            subtotal: 0,
+            vat: 0,
+            totalMonthlySAR: 0
+          }
+        });
+      } else if (/modify|change|adjust|different/i.test(userMessage)) {
+        console.log('[DEBUG] User wants to modify the suggestion');
+        
+        setSessionState(sessionId, { 
+          mode: 'suggestion_gathering',
+          awaitingRequirements: true 
+        });
+        
+        const modifyMsg = `I'd be happy to adjust the configuration! 
+
+Please tell me what you'd like to change:
+- Different service types or configurations
+- Adjust performance requirements  
+- Modify capacity or storage needs
+- Change to different pricing tier
+
+What specific changes would you like to make?`;
+
+        chatHistories.get(sessionId).push({ role: 'assistant', content: modifyMsg });
+        return res.json({ message: modifyMsg });
+      }
+    }
+
+    // Handle AI suggestion mode first (highest priority)
+    if (state && state.mode === 'suggestion_gathering' && state.awaitingRequirements) {
+      console.log('[DEBUG] Processing AI suggestion request');
+      
+      // Generate AI suggestion based on user requirements
+      let aiSuggestion;
+      try {
+        console.log('[DEBUG] Calling getGroqAIResponse...');
+        aiSuggestion = await getGroqAIResponse('ai_suggestion', userMessage);
+        console.log('[DEBUG] AI Suggestion received:', aiSuggestion);
+      } catch (error) {
+        console.log('[DEBUG] Error getting AI suggestion:', error);
+        throw error;
+      }
+      
+      // Parse the AI response
+      let suggestion;
+      try {
+        suggestion = typeof aiSuggestion === 'string' ? JSON.parse(aiSuggestion) : aiSuggestion;
+      } catch (e) {
+        console.log('[DEBUG] Failed to parse AI suggestion, using fallback');
+        // Fallback suggestion if parsing fails
+        suggestion = {
+          analysis: "Based on your requirements, I recommend a scalable web application setup.",
+          recommendedServices: [
+            {
+              name: "ecs",
+              reason: "For hosting your application with scalable compute power",
+              config: { instanceType: "ecs.g6.large", instanceCount: 2, region: "riyadh", osType: "Linux" }
+            },
+            {
+              name: "tdsql",
+              reason: "For reliable database storage",
+              config: { engine: "MySQL 5.7", instanceSize: "small", storageSize: "100", backupRetention: "7 days" }
+            }
+          ],
+          estimatedCapacity: "Suitable for medium-scale applications",
+          monthlyCost: "~800 SAR/month",
+          nextSteps: "Please confirm if this configuration meets your needs."
         };
-        setSessionState(sessionId, state);
-        
-        const nextServiceName = newServiceNames[0].toUpperCase();
-        const aiMsg = await getGroqConversationalResponse(
-          `Great! Let's add ${nextServiceName} to your configuration. I'll help you configure ${nextServiceName} now.`
-        );
-        const msg = stringifyMessage(aiMsg);
-        chatHistories.get(sessionId).push({ role: 'assistant', content: msg });
-        return res.json({ message: msg });
-      } else {
-        // Not adding a service, handle as general query about completed config
-        const aiMsg = await getGroqConversationalResponse(
-          `The user said: "${userMessage}". Their configuration is complete. Help them with their question or ask if they want to add more services (ECS, OSS, TDSQL) or finalize the current configuration.`
-        );
-        const msg = stringifyMessage(aiMsg);
-        chatHistories.get(sessionId).push({ role: 'assistant', content: msg });
-        return res.json({ message: msg });
       }
-    }
-    
-    // Step 1: Service selection if not started
-    if (!state) {
-      // Detect multiple services in user message
-      let serviceNames = [];
-      if (/ecs|virtual machine|vm|compute|server|instance/i.test(userMessage)) serviceNames.push('ecs');
-      if (/oss|object storage|storage|files|backup/i.test(userMessage)) serviceNames.push('oss');
-      if (/tdsql|database|mysql|postgres|db|sql/i.test(userMessage)) serviceNames.push('tdsql');
+
+      // Calculate real pricing for the suggested services
+      let totalPricing = { subtotal: 0, vat: 0, total: 0 };
+      try {
+        const serviceConfigs = suggestion.recommendedServices || [];
+        const pricingConfig = {};
+        
+        // Transform service suggestions to pricing config format
+        for (const service of serviceConfigs) {
+          if (service.config && service.name) {
+            pricingConfig[service.name.toLowerCase()] = service.config;
+          }
+        }
+        
+        console.log('[DEBUG] Pricing config:', pricingConfig);
+        
+        if (Object.keys(pricingConfig).length > 0) {
+          const pricing = calculatePricing(pricingConfig);
+          totalPricing.subtotal = pricing.subtotal || pricing.subtotalSAR || 0;
+          totalPricing.vat = pricing.vat || pricing.vatSAR || 0;
+          totalPricing.total = pricing.total || pricing.totalMonthlySAR || 0;
+        }
+      } catch (pricingError) {
+        console.log('[DEBUG] Pricing calculation error:', pricingError);
+      }
+
+      // Format the response with pricing
+      const responseMsg = `Perfect! Based on your requirements: "${userMessage}"
+
+📊 Recommended Configuration
+
+${suggestion.analysis || 'Based on your requirements, here\'s my recommended cloud architecture optimized for performance and cost-effectiveness.'}
+
+Suggested Services:
+
+${(suggestion.recommendedServices || []).map(service => 
+`${service.name.toUpperCase()} - ${service.reason}
+Configuration: ${JSON.stringify(service.config, null, 2)}`
+).join('\n\n')}
+
+📈 Capacity & Performance:
+- Estimated Capacity: ${suggestion.estimatedCapacity || suggestion.estimatedUsers || 'Optimized for your requirements'}
+- Estimated Monthly Cost: ${totalPricing.total > 0 ? `${totalPricing.total.toFixed(2)} SAR/month (including 15% VAT)` : suggestion.monthlyCost || '~800 SAR/month'}
+
+💰 Cost Breakdown:
+- Subtotal: ${totalPricing.subtotal.toFixed(2)} SAR
+- VAT (15%): ${totalPricing.vat.toFixed(2)} SAR
+- Total: ${totalPricing.total.toFixed(2)} SAR/month
+
+Next Steps:
+${suggestion.nextSteps || 'Please confirm if this configuration meets your needs, or let me know if you\'d like to adjust anything.'}
+
+Do you want me to proceed with this configuration? 
+Reply with:
+- "Yes" to proceed with this setup
+- "Modify" to adjust any service
+- "Manual" to configure services yourself`;
+
+      chatHistories.get(sessionId).push({ role: 'assistant', content: responseMsg });
       
-      if (serviceNames.length === 0) {
-        // Let AI handle the greeting and first question
-        const aiMsg = await getGroqConversationalResponse(
-          `The user said: "${userMessage}". Greet them warmly and ask which cloud service they're interested in. Our services are ECS (compute instances), OSS (object storage), or TDSQL (database). Be friendly and helpful.`
-        );
-        const msg = stringifyMessage(aiMsg);
-        chatHistories.get(sessionId).push({ role: 'assistant', content: msg });
-        return res.json({ message: msg });
-      }
-      state = initializeState(serviceNames);
-      setSessionState(sessionId, state);
-    }
+      // Update state to indicate suggestion provided
+      setSessionState(sessionId, { 
+        mode: 'suggestion_provided',
+        suggestedServices: suggestion.recommendedServices,
+        pricing: {
+          subtotal: totalPricing.subtotalSAR,
+          vat: totalPricing.vatSAR,
+          totalMonthlySAR: totalPricing.totalMonthlySAR
+        },
+        awaitingConfirmation: true 
+      });
 
-    // Multi-service: handle each service in order
-    const { services, currentServiceIdx } = state;
-    const currentService = services[currentServiceIdx];
-    let requiredFields;
-    try {
-      requiredFields = await getRequiredFields(currentService.name);
-      if (!requiredFields || !Array.isArray(requiredFields) || requiredFields.length === 0) {
-        throw new Error('No required fields found for service: ' + currentService.name);
-      }
-    } catch (err) {
-      console.error('[AI ROUTE] Error fetching required fields:', err);
-      return res.status(500).json({ error: 'Failed to fetch required fields for service: ' + currentService.name });
-    }
-    // Debug: log required fields
-    console.log('[DEBUG] requiredFields:', requiredFields);
+      console.log('[DEBUG] AI suggestion received:', JSON.stringify(suggestion, null, 2));
+      console.log('[DEBUG] Recommended services:', JSON.stringify(suggestion.recommendedServices, null, 2));
 
-    // Find next missing field for current service
-    let nextFieldObj = getNextMissingField(currentService.fields, requiredFields);
-    // Debug: log next field object
-    console.log('[DEBUG] nextFieldObj:', nextFieldObj);
-    if (!nextFieldObj) {
-      services[currentServiceIdx].complete = true;
-      if (currentServiceIdx < services.length - 1) {
-        state.currentServiceIdx++;
-        setSessionState(sessionId, state);
-        // Let AI introduce the next service naturally
-        const nextServiceName = services[state.currentServiceIdx].name.toUpperCase();
-        const aiMsg = await getGroqConversationalResponse(
-          `The user has finished configuring ${currentService.name.toUpperCase()}. Now they need to configure ${nextServiceName}. Transition smoothly and ask if they're ready to configure ${nextServiceName}.`
-        );
-        const msg = stringifyMessage(aiMsg);
-        chatHistories.get(sessionId).push({ role: 'assistant', content: msg });
-        return res.json({ message: msg });
-      } else {
-        // All services complete, show summary and pricing
-        console.log('[DEBUG] *** ALL SERVICES COMPLETE - CALCULATING PRICING ***');
-        console.log('[DEBUG] Final services configuration:', JSON.stringify(services, null, 2));
-        
-        // Calculate pricing for each service
-        const servicesArr = [];
-        let totalCost = 0;
-        let totalSubtotal = 0;
-        let totalVAT = 0;
-        
-        for (const service of services) {
-          console.log(`[DEBUG] Processing pricing for ${service.name}:`, service.fields);
+      return res.json({ 
+        message: responseMsg,
+        complete: true,
+        services: suggestion.recommendedServices.map(service => {
+          // Calculate individual service cost
+          let individualCost = 0;
+          try {
+            const singleServiceConfig = {};
+            singleServiceConfig[service.name.toLowerCase()] = service.config;
+            const servicePrice = calculatePricing(singleServiceConfig);
+            individualCost = servicePrice.subtotalSAR || 0;
+          } catch (error) {
+            console.log('[DEBUG] Error calculating individual service cost:', error);
+          }
           
-          let servicePricing = { subtotalSAR: 0, vatSAR: 0, totalMonthlySAR: 0 };
+          return {
+            name: service.name,
+            description: service.reason,
+            config: service.config,
+            monthlyCost: individualCost
+          };
+        }),
+        pricing: {
+          subtotal: totalPricing.subtotalSAR,
+          vat: totalPricing.vatSAR,
+          totalMonthlySAR: totalPricing.totalMonthlySAR
+        }
+      });
+    }
+
+    // Handle initial greeting and service selection
+    if (!state && sessionHistory.length === 1) {
+      // FIRST: Check if user chose manual configuration in first message
+      if (/option.*1|choice.*1|manual|configure.*myself/i.test(userMessage)) {
+        console.log('[DEBUG] User chose manual configuration in first message');
+        
+        setSessionState(sessionId, {
+          mode: 'manual_configuration',
+          awaitingServiceSelection: true
+        });
+        
+        const manualMsg = `Perfect! Let's configure your services manually. Which services would you like to set up?
+
+Available services:
+- **ECS** (Elastic Compute Service) - Virtual machines and compute power
+- **OSS** (Object Storage Service) - File storage and backup  
+- **TDSQL** (Database Service) - Managed database solutions
+
+Just tell me which ones you need (e.g., "ECS", "OSS", or "ECS and TDSQL").`;
+
+        chatHistories.get(sessionId).push({ role: 'assistant', content: manualMsg });
+        return res.json({ message: manualMsg });
+      }
+      
+      // SECOND: Check if user chose AI suggestions in first message
+      if (/option.*2|choice.*2|ai.*suggest|ai.*recommendation/i.test(userMessage)) {
+        console.log('[DEBUG] User chose AI suggestions in first message');
+        
+        setSessionState(sessionId, { 
+          mode: 'suggestion_gathering',
+          awaitingRequirements: true 
+        });
+        
+        const promptMsg = `Great! I'd be happy to suggest the perfect cloud configuration for your needs.
+
+Please describe your application requirements in detail. For example:
+- "A web application with database for 1000 users"
+- "E-commerce platform with file storage for 5000 customers"  
+- "Live streaming platform with 100 concurrent users per hour"
+
+The more details you provide about your expected users, features, and performance needs, the better I can tailor the recommendations!`;
+
+        chatHistories.get(sessionId).push({ role: 'assistant', content: promptMsg });
+        return res.json({ message: promptMsg });
+      }
+      
+      // THIRD: Check if user is directly describing their application (detailed description)
+      const isDetailedDescription = /\b(application|app|website|platform|system|service|project)\b.*\b(users?|customers?|orders?|concurrent|daily|monthly|traffic|visitors?|data|storage|processing|backend|frontend|api|database|real.?time|authentication|payment|e-?commerce|streaming|iot|analytics|mobile|web)\b/i.test(userMessage);
+      
+      console.log('[DEBUG] Checking detailed description pattern for:', userMessage);
+      console.log('[DEBUG] isDetailedDescription:', isDetailedDescription);
+      
+      if (isDetailedDescription) {
+        console.log('[DEBUG] User provided detailed application description in first message, processing immediately');
+        
+        // Process the application description immediately
+        const aiSuggestion = await getGroqAIResponse('ai_suggestion', userMessage);
+        console.log('[DEBUG] AI Suggestion received:', aiSuggestion);
+        
+        // Parse the AI response
+        let suggestion;
+        try {
+          suggestion = typeof aiSuggestion === 'string' ? JSON.parse(aiSuggestion) : aiSuggestion;
+        } catch (e) {
+          console.log('[DEBUG] Failed to parse AI suggestion, using fallback');
+          suggestion = {
+            analysis: "Based on your mobile application requirements with 4,000 users and 100 orders per day, I recommend a balanced setup optimized for performance and reliability.",
+            recommendedServices: [
+              { name: "ecs", reason: "For reliable application hosting with scalable compute power", config: { instanceType: "ecs.g6.xlarge", instanceCount: 3, region: "riyadh", osType: "Linux" }},
+              { name: "tdsql", reason: "For secure order and user data management with high availability", config: { engine: "MySQL 8.0", instanceSize: "large", storageSize: "1000", backupRetention: "7 days" }}
+            ],
+            estimatedCapacity: "400 concurrent users with room for 600 peak traffic",
+            monthlyCost: "~5700 SAR/month",
+            nextSteps: "Please confirm if this configuration meets your needs."
+          };
+        }
+
+        // Calculate real pricing for the suggested services
+        let totalPricing = { subtotal: 0, vat: 0, total: 0 };
+        try {
+          const serviceConfigs = suggestion.recommendedServices || [];
+          const pricingConfig = {};
+          
+          // Transform service suggestions to pricing config format
+          for (const service of serviceConfigs) {
+            if (service.config && service.name) {
+              pricingConfig[service.name.toLowerCase()] = service.config;
+            }
+          }
+          
+          console.log('[DEBUG] Pricing config for first message processing:', pricingConfig);
+          
+          if (Object.keys(pricingConfig).length > 0) {
+            const pricing = calculatePricing(pricingConfig);
+            totalPricing.subtotal = pricing.subtotal || pricing.subtotalSAR || 0;
+            totalPricing.vat = pricing.vat || pricing.vatSAR || 0;
+            totalPricing.total = pricing.total || pricing.totalMonthlySAR || 0;
+          }
+        } catch (pricingError) {
+          console.log('[DEBUG] Pricing calculation error:', pricingError);
+        }
+
+        // Format the response with pricing
+        const responseMsg = `Perfect! Based on your requirements: "${userMessage}"
+
+## 📊 **Recommended Configuration**
+
+**${suggestion.analysis}**
+
+### **Suggested Services:**
+
+${(suggestion.recommendedServices || []).map(service => 
+`**${service.name.toUpperCase()}** - ${service.reason}
+Configuration: ${JSON.stringify(service.config, null, 2)}`
+).join('\n\n')}
+
+### **📈 Capacity & Performance:**
+- **Estimated Capacity:** ${suggestion.estimatedCapacity}
+- **Estimated Monthly Cost:** ${totalPricing.total > 0 ? `${totalPricing.total.toFixed(2)} SAR/month (including 15% VAT)` : suggestion.monthlyCost}
+
+### **💰 Cost Breakdown:**
+- **Subtotal:** ${totalPricing.subtotal.toFixed(2)} SAR
+- **VAT (15%):** ${totalPricing.vat.toFixed(2)} SAR
+- **Total:** ${totalPricing.total.toFixed(2)} SAR/month
+
+### **Next Steps:**
+${suggestion.nextSteps}
+
+**Do you want me to proceed with this configuration?** 
+Reply with:
+- "**Yes**" to proceed with this setup
+- "**Modify**" to adjust any service
+- "**Manual**" to configure services yourself`;
+
+        chatHistories.get(sessionId).push({ role: 'assistant', content: responseMsg });
+        
+        setSessionState(sessionId, { 
+          mode: 'suggestion_provided',
+          suggestedServices: suggestion.recommendedServices,
+          pricing: {
+            subtotal: totalPricing.subtotal,
+            vat: totalPricing.vat,
+            totalMonthlySAR: totalPricing.total
+          },
+          awaitingConfirmation: true 
+        });
+
+        return res.json({ 
+          message: responseMsg,
+          complete: true,
+          services: suggestion.recommendedServices.map(service => {
+            // Calculate individual service cost for first message processing
+            let individualCost = 0;
+            try {
+              const singleServiceConfig = {};
+              singleServiceConfig[service.name.toLowerCase()] = service.config;
+              const servicePrice = calculatePricing(singleServiceConfig);
+              individualCost = servicePrice.subtotalSAR || 0;
+            } catch (error) {
+              console.log('[DEBUG] Error calculating individual service cost for first message:', error);
+            }
+            
+            return {
+              name: service.name,
+              description: service.reason,
+              config: service.config,
+              monthlyCost: individualCost
+            };
+          }),
+          pricing: {
+            subtotal: totalPricing.subtotal,
+            vat: totalPricing.vat,
+            totalMonthlySAR: totalPricing.total
+          }
+        });
+      }
+      
+      // Default greeting (if no specific choice was made)
+      const initialGreeting = `Hi! Welcome to SCCC AI-Powered Cloud Advisor! 🚀
+
+I can help you configure the perfect cloud solution. You have two options:
+
+**Option 1: Manual Configuration**
+Tell me which services you'd like to configure:
+• ECS (Elastic Compute Service) - Virtual machines and compute power
+• OSS (Object Storage Service) - File storage and backup
+• TDSQL (Database Service) - Managed database solutions
+
+**Option 2: AI Suggestion**
+Describe your application requirements (e.g., "A web application with database for 1000 users") and I'll suggest the best service combination and configuration for you.
+
+Which approach would you prefer?`;
+
+      chatHistories.get(sessionId).push({ role: 'assistant', content: initialGreeting });
+      return res.json({ message: initialGreeting });
+    }
+
+    // Handle manual configuration mode - database-driven approach
+    if (state && state.mode === 'manual_configuration') {
+      console.log('[DEBUG] Processing manual configuration request');
+      console.log('[DEBUG] State awaitingConfirmation:', state.awaitingConfirmation);
+      console.log('[DEBUG] State configuredServices:', state.configuredServices?.length || 'undefined');
+      
+      // Check for restart request
+      if (/restart|start.*over|begin.*again|new.*configuration/i.test(userMessage)) {
+        console.log('[DEBUG] User requested restart');
+        
+        // Clear session state and start over
+        sessionStates.delete(sessionId);
+        chatHistories.delete(sessionId);
+        
+        const restartMsg = `Sure! Let's start fresh. 
+
+Hi! Welcome to SCCC AI-Powered Cloud Advisor! 🚀
+
+I can help you configure the perfect cloud solution. You have two options:
+
+Option 1: Manual Configuration
+Tell me which services you'd like to configure:
+- ECS (Elastic Compute Service) - Virtual machines and compute power
+- OSS (Object Storage Service) - File storage and backup
+- TDSQL (Database Service) - Managed database solutions
+
+Option 2: AI Suggestion
+Describe your application requirements (e.g., "A web application with database for 1000 users") and I'll suggest the best service combination and configuration for you.
+
+Which approach would you prefer?`;
+
+        chatHistories.set(sessionId, [{ role: 'assistant', content: restartMsg }]);
+        return res.json({ message: restartMsg });
+      }
+      
+      if (state.awaitingServiceSelection) {
+        console.log('[DEBUG] User needs to select a service, message:', userMessage);
+        
+        // Check which service the user selected
+        let selectedServiceName = null;
+        if (/ecs/i.test(userMessage)) selectedServiceName = 'ecs';
+        else if (/oss/i.test(userMessage)) selectedServiceName = 'oss';
+        else if (/tdsql/i.test(userMessage)) selectedServiceName = 'tdsql';
+        
+        if (selectedServiceName) {
+          console.log(`[DEBUG] User selected ${selectedServiceName}, fetching service from database`);
           
           try {
-            // Use the enhanced pricing engine for all services
-            const { calculateServicePricing } = await import('../services/enhancedPricingEngine.js');
-            servicePricing = calculateServicePricing(service.name, service.fields);
-            console.log(`[DEBUG] ${service.name} pricing result:`, servicePricing);
-          } catch (e) {
-            console.error(`[DEBUG] Pricing error for ${service.name}:`, e);
-            servicePricing = { subtotalSAR: 0, vatSAR: 0, totalMonthlySAR: 0 };
-          }
-          
-          // Build service summary for frontend - pass fields as object
-          servicesArr.push({
-            name: service.name.toUpperCase(),
-            config: service.fields, // Pass the actual fields object
-            monthlyCost: servicePricing.totalMonthlySAR,
-            subtotal: servicePricing.subtotalSAR || servicePricing.subtotal,
-            vat: servicePricing.vatSAR || servicePricing.vat
-          });
-          
-          totalCost += servicePricing.totalMonthlySAR || 0;
-          totalSubtotal += servicePricing.subtotalSAR || servicePricing.subtotal || 0;
-          totalVAT += servicePricing.vatSAR || servicePricing.vat || 0;
-        }
-        
-        const totalPricing = {
-          subtotal: +totalSubtotal.toFixed(2),
-          vat: +totalVAT.toFixed(2),
-          totalMonthlySAR: +totalCost.toFixed(2)
-        };
-        
-        console.log('[DEBUG] *** FINAL PRICING SUMMARY ***');
-        console.log('[DEBUG] Services:', servicesArr);
-        console.log('[DEBUG] Total pricing:', totalPricing);
-        
-        // Generate a final summary message
-        const summaryMsg = `Configuration complete! Total monthly cost: ${totalPricing.totalMonthlySAR} SAR (including VAT). You can add more services or finalize this configuration.`;
-        chatHistories.get(sessionId).push({ role: 'assistant', content: summaryMsg });
-        
-        // Store the completed configuration temporarily (don't clear session yet)
-        state.completedServices = servicesArr;
-        state.completedPricing = totalPricing;
-        state.isComplete = true;
-        setSessionState(sessionId, state);
-        
-        return res.json({ 
-          message: summaryMsg,
-          services: servicesArr, 
-          pricing: totalPricing,
-          complete: true
-        });
-      }
-    }
-
-    // If this is the very first interaction after service selection (chat history only has user service selection), send first field prompt
-    const chatHistory = chatHistories.get(sessionId) || [];
-    const isFirstFieldPrompt = chatHistory.length === 1 && Object.keys(currentService.fields).length === 0;
-    
-    if (isFirstFieldPrompt) {
-      // Prompt for the first required field
-      const firstField = requiredFields[0];
-      let messageText;
-      // Use aiQuestion if available, else build a detailed prompt
-      if (firstField.aiQuestion) {
-        messageText = firstField.aiQuestion;
-      } else if (firstField.options && Array.isArray(firstField.options) && firstField.options.length > 0) {
-        const fieldContext = firstField.label || firstField.key;
-        const description = firstField.description ? ` ${firstField.description}.` : '';
-        messageText = `What ${fieldContext.toLowerCase()} would you like?${description} Available options: ${firstField.options.join(', ')}. If you need help choosing, I can explain each option.`;
-      } else if (firstField.type === 'number' || (firstField.min && firstField.max)) {
-        messageText = `Please enter a value for ${firstField.label || firstField.key}`;
-        if (firstField.min !== undefined && firstField.max !== undefined) {
-          messageText += ` (range: ${firstField.min} to ${firstField.max})`;
-        }
-      } else {
-        messageText = `What would you like for ${firstField.label || firstField.key}?`;
-      }
-      chatHistories.get(sessionId).push({ role: 'assistant', content: messageText });
-      return res.json({ message: messageText });
-    }
-
-    // Process user input for the current field - EXTRACT VALUE FIRST
-    console.log('[DEBUG] About to start field extraction logic');
-    
-    // Check if user is asking for help or explanation
-    const isHelpRequest = /\b(help|explain|what|how|tell me|info|information|details|options|choices|difference|clarify|don't understand|confused)\b/i.test(userMessage) ||
-                         userMessage.includes('?');
-    
-    if (isHelpRequest) {
-      console.log('[DEBUG] User is asking for help/explanation');
-      let explanation;
-      
-      // Check if user is asking about a specific option/value - search across all service fields
-      let specificItem = null;
-      let specificField = null;
-      let serviceContext = currentService.name || 'cloud service';
-      
-      // First, try to extract specific option from user message (like "ecs.g6.large" or just "g6.large")
-      const optionMatch = userMessage.match(/(?:ecs|oss|tdsql)?\.?([a-zA-Z0-9._-]+(?:\.[a-zA-Z0-9._-]+)*)/i);
-      if (optionMatch) {
-        const potentialOption = optionMatch[1];
-        console.log('[DEBUG] Extracted potential option:', potentialOption);
-        
-        // Search through all fields of the current service to find this option
-        for (const field of requiredFields) {
-          if (field.options && field.options.length > 0) {
-            const foundOption = field.options.find(option => 
-              option.toLowerCase().includes(potentialOption.toLowerCase()) ||
-              potentialOption.toLowerCase().includes(option.toLowerCase())
-            );
-            if (foundOption) {
-              specificItem = foundOption;
-              specificField = field;
-              break;
-            }
-          }
-        }
-      }
-      
-      // If no specific option found from pattern, check current field
-      if (!specificItem && nextFieldObj.options && nextFieldObj.options.length > 0) {
-        specificItem = nextFieldObj.options.find(option => 
-          userMessage.toLowerCase().includes(option.toLowerCase())
-        );
-        if (specificItem) {
-          specificField = nextFieldObj;
-        }
-      }
-      
-      if (specificItem && specificField) {
-        // User is asking about a specific option - provide detailed explanation
-        console.log('[DEBUG] User asking about specific item:', specificItem, 'in field:', specificField.key);
-        const fieldContext = specificField.label || specificField.key;
-        
-        // Create more detailed prompt based on the field type
-        let detailedPrompt;
-        if (specificField.key === 'instanceType') {
-          detailedPrompt = `Explain the ECS instance type ${specificItem} in detail. Include: CPU cores, RAM, performance characteristics, ideal workloads, pricing tier (budget/standard/premium), and specific use cases. Compare it briefly to other available options if relevant.`;
-        } else if (specificField.key === 'storageType') {
-          detailedPrompt = `Explain the storage type ${specificItem} for ${serviceContext}. Include: performance characteristics, IOPS, throughput, durability, cost per GB, and ideal use cases. When should customers choose this option?`;
-        } else if (specificField.key === 'databaseEngine') {
-          detailedPrompt = `Explain the database engine ${specificItem} for ${serviceContext}. Include: version features, performance characteristics, compatibility, security features, and ideal use cases. Compare with other available engines if helpful.`;
-        } else {
-          detailedPrompt = `For ${serviceContext}, explain in detail what ${specificItem} means for ${fieldContext.toLowerCase()}. What are its specifications, use cases, performance characteristics, and when should customers choose this option? Be specific and helpful.`;
-        }
-        
-        explanation = await getGroqExplanation(detailedPrompt);
-      } else if (nextFieldObj.options && nextFieldObj.options.length > 0) {
-        // General explanation of all options for this field
-        const fieldContext = nextFieldObj.label || nextFieldObj.key;
-        const description = nextFieldObj.description || '';
-        const units = nextFieldObj.units ? ` (${nextFieldObj.units})` : '';
-        const serviceContext = currentService.name || 'cloud service';
-        
-        explanation = await getGroqExplanation(
-          `For ${serviceContext}, explain these ${fieldContext.toLowerCase()}${units} options: ${nextFieldObj.options.join(', ')}. ${description} Compare their benefits, use cases, and when to choose each one.`
-        );
-      } else if (nextFieldObj.type === 'number' || nextFieldObj.min !== undefined) {
-        const fieldContext = nextFieldObj.label || nextFieldObj.key;
-        const units = nextFieldObj.units ? ` (${nextFieldObj.units})` : '';
-        const rangeInfo = (nextFieldObj.min !== undefined && nextFieldObj.max !== undefined) 
-          ? ` (range: ${nextFieldObj.min}-${nextFieldObj.max})` 
-          : '';
-        const description = nextFieldObj.description || '';
-        const serviceContext = currentService.name || 'cloud service';
-        
-        explanation = await getGroqExplanation(
-          `For ${serviceContext}, explain how to choose the right ${fieldContext.toLowerCase()}${units}${rangeInfo}. ${description} What factors should customers consider when deciding this value?`
-        );
-      } else {
-        const fieldContext = nextFieldObj.label || nextFieldObj.key;
-        const description = nextFieldObj.description || '';
-        const serviceContext = currentService.name || 'cloud service';
-        
-        explanation = await getGroqExplanation(
-          `For ${serviceContext}, explain what ${fieldContext.toLowerCase()} means and how to choose the right value. ${description} Provide practical guidance for customers.`
-        );
-      }
-      
-      const msg = stringifyMessage(explanation);
-      chatHistories.get(sessionId).push({ role: 'assistant', content: msg });
-      return res.json({ message: msg });
-    }
-    
-    // Check if user provided answers for multiple fields at once
-    const allFieldKeys = requiredFields.map(f => f.key);
-    const multiFieldAnswers = {};
-    let foundMultipleAnswers = false;
-    
-    // Try to extract values for all missing fields from the user message
-    for (const field of requiredFields) {
-      if (currentService.fields[field.key]) continue; // Skip already filled fields
-      
-      let value = null;
-      
-      if (field.options && Array.isArray(field.options)) {
-        // Look for field-specific keywords or option matches
-        const userInput = userMessage.toLowerCase();
-        value = field.options.find(opt => {
-          const normOpt = opt.toLowerCase();
-          return userInput.includes(normOpt) || normOpt.includes(userInput);
-        });
-      } else if (field.type === 'number' || field.min !== undefined) {
-        // Extract numbers - could be multiple in the message
-        const numbers = userMessage.match(/\d+/g);
-        if (numbers && numbers.length > 0) {
-          // For now, just take the first number found
-          const num = parseInt(numbers[0], 10);
-          if ((field.min === undefined || num >= field.min) && 
-              (field.max === undefined || num <= field.max)) {
-            value = num.toString();
-          }
-        }
-      }
-      
-      if (value) {
-        multiFieldAnswers[field.key] = value;
-        foundMultipleAnswers = true;
-      }
-    }
-    
-    // If multiple fields found, confirm with user before proceeding
-    if (foundMultipleAnswers && Object.keys(multiFieldAnswers).length > 1) {
-      console.log('[DEBUG] Found multiple field answers:', multiFieldAnswers);
-      
-      // Build confirmation message
-      const confirmationItems = Object.entries(multiFieldAnswers).map(([key, value]) => {
-        const field = requiredFields.find(f => f.key === key);
-        const label = field ? (field.label || field.key) : key;
-        return `${label}: ${value}`;
-      });
-      
-      const confirmationMsg = await getGroqConversationalResponse(
-        `The user provided multiple answers: ${confirmationItems.join(', ')}. Ask them to confirm if these are correct before proceeding. Be conversational and friendly.`
-      );
-      
-      // Store the potential answers for next interaction
-      state.pendingAnswers = multiFieldAnswers;
-      setSessionState(sessionId, state);
-      
-      const msg = stringifyMessage(confirmationMsg);
-      chatHistories.get(sessionId).push({ role: 'assistant', content: msg });
-      return res.json({ message: msg });
-    }
-    
-    // Check if user is confirming previously suggested answers
-    if (state.pendingAnswers && /\b(yes|correct|right|ok|confirm|that's right|looks good)\b/i.test(userMessage)) {
-      console.log('[DEBUG] User confirmed pending answers');
-      
-      // Apply all pending answers
-      for (const [fieldKey, value] of Object.entries(state.pendingAnswers)) {
-        const field = requiredFields.find(f => f.key === fieldKey);
-        if (field) {
-          updateFields(currentService.fields, field, value);
-        }
-      }
-      
-      // Clear pending answers
-      delete state.pendingAnswers;
-      setSessionState(sessionId, state);
-      
-      // Check if all fields are now complete
-      const nextField = getNextMissingField(currentService.fields, requiredFields);
-      if (nextField) {
-        // Ask for the next missing field
-        let nextPrompt;
-        if (nextField.aiQuestion) {
-          nextPrompt = nextField.aiQuestion;
-        } else {
-          nextPrompt = `What would you like for ${nextField.label || nextField.key}?`;
-        }
-        chatHistories.get(sessionId).push({ role: 'assistant', content: nextPrompt });
-        return res.json({ message: nextPrompt });
-      } else {
-        // All fields complete for this service
-        services[currentServiceIdx].complete = true;
-        // Continue with service completion logic...
-        if (currentServiceIdx < services.length - 1) {
-          state.currentServiceIdx++;
-          setSessionState(sessionId, state);
-          const nextServiceName = services[state.currentServiceIdx].name.toUpperCase();
-          const aiMsg = await getGroqConversationalResponse(
-            `The user has finished configuring ${currentService.name.toUpperCase()}. Now they need to configure ${nextServiceName}. Transition smoothly and ask if they're ready to configure ${nextServiceName}.`
-          );
-          const msg = stringifyMessage(aiMsg);
-          chatHistories.get(sessionId).push({ role: 'assistant', content: msg });
-          return res.json({ message: msg });
-        } else {
-          // All services complete - proceed to pricing calculation
-          // (Pricing logic will be handled in the main flow below)
-        }
-      }
-    }
-    
-    // Check if user is rejecting previously suggested answers
-    if (state.pendingAnswers && /\b(no|wrong|incorrect|not right|fix|change)\b/i.test(userMessage)) {
-      console.log('[DEBUG] User rejected pending answers');
-      
-      // Clear pending answers and ask for the current field again
-      delete state.pendingAnswers;
-      setSessionState(sessionId, state);
-      
-      const retryMsg = await getGroqConversationalResponse(
-        `The user wants to correct their previous answers. Ask them to provide the correct information for ${nextFieldObj.label || nextFieldObj.key} step by step. Be helpful and understanding.`
-      );
-      
-      const msg = stringifyMessage(retryMsg);
-      chatHistories.get(sessionId).push({ role: 'assistant', content: msg });
-      return res.json({ message: msg });
-    }
-    
-    // Enhanced field extraction logic
-    let extractedValue = null;
-    
-    // Debug: print nextFieldObj and requiredFields before extraction
-    console.log('[DEBUG] nextFieldObj:', nextFieldObj);
-    console.log('[DEBUG] requiredFields:', requiredFields);
-    
-    // Check field type first - Number fields take priority
-    if (nextFieldObj.type === 'number' ||
-        nextFieldObj.min !== undefined ||
-        nextFieldObj.max !== undefined ||
-        ['count', 'size', 'nodes', 'storageGB', 'diskSize'].includes(nextFieldObj.key)) {
-      
-      console.log('[DEBUG] Processing as NUMBER field');
-      // Extract numbers from anywhere in the message (e.g. "2 instances", "I want 2")
-      const numberMatches = userMessage.match(/\d+/g);
-      if (numberMatches && numberMatches.length > 0) {
-        let number = parseInt(numberMatches[0], 10);
-        // If multiple numbers, try to pick the most relevant one
-        if (numberMatches.length > 1) {
-          // For storage fields, prefer larger numbers
-          if (nextFieldObj.key.includes('storage') || nextFieldObj.key.includes('disk')) {
-            number = Math.max(...numberMatches.map(n => parseInt(n, 10)));
-          }
-        }
-        // Validate against constraints
-        if (nextFieldObj.min !== undefined && number < nextFieldObj.min) {
-          console.log('[DEBUG] Number too small:', number, 'min:', nextFieldObj.min);
-          extractedValue = null; // Will ask again with guidance
-        } else if (nextFieldObj.max !== undefined && number > nextFieldObj.max) {
-          console.log('[DEBUG] Number too large:', number, 'max:', nextFieldObj.max);
-          extractedValue = null; // Will ask again with guidance
-        } else {
-          extractedValue = number.toString();
-          console.log('[DEBUG] Found valid number:', extractedValue);
-        }
-      } else {
-        console.log('[DEBUG] No number found in user message for numeric field');
-      }
-    }
-    // Option field: robust match user input to available options (trim, lowercase, allow partial)
-    else if (nextFieldObj.options && Array.isArray(nextFieldObj.options) && nextFieldObj.options.length > 0) {
-      console.log('[DEBUG] Processing as OPTION field');
-      const userInput = userMessage.trim().toLowerCase();
-      console.log('[DEBUG] Option extraction - userInput:', userInput, 'options:', nextFieldObj.options);
-      // Exact match
-      extractedValue = nextFieldObj.options.find(opt => {
-        const normOpt = opt.trim().toLowerCase();
-        const isExact = normOpt === userInput;
-        if (isExact) console.log('[DEBUG] Exact match:', normOpt, userInput);
-        return isExact;
-      });
-      // Partial match if no exact
-      if (!extractedValue) {
-        extractedValue = nextFieldObj.options.find(opt => {
-          const normOpt = opt.trim().toLowerCase();
-          const isPartial = userInput.includes(normOpt) || normOpt.includes(userInput);
-          if (isPartial) console.log('[DEBUG] Partial match:', normOpt, userInput);
-          return isPartial;
-        });
-      }
-      console.log('[DEBUG] Option extraction result:', extractedValue);
-    } else {
-      console.log('[DEBUG] Processing as TEXT field');
-      // For text fields, be more permissive but validate
-      const trimmed = userMessage.trim();
-      if (trimmed.length > 0 && trimmed.length < 200 && 
-          !trimmed.toLowerCase().includes('help') && 
-          !trimmed.toLowerCase().includes('what') && 
-          !trimmed.toLowerCase().includes('how') &&
-          !trimmed.toLowerCase().includes('?')) {
-        extractedValue = trimmed;
-        console.log('[DEBUG] Using message as text field:', extractedValue);
-      }
-    }
-    
-    // If direct extraction failed, try AI-powered extraction as fallback
-    if (!extractedValue) {
-      console.log('[DEBUG] Direct extraction failed, trying AI extraction...');
-      try {
-        let extractionPrompt;
-        let aiExtracted;
-        
-        if (nextFieldObj.options && nextFieldObj.options.length > 0) {
-          extractionPrompt = `From this user message: "${userMessage}", extract which option they chose for ${nextFieldObj.label}. Available options are: ${nextFieldObj.options.join(', ')}. Return just the exact option name, or "null" if unclear.`;
-          aiExtracted = await getGroqConversationalResponse(extractionPrompt);
-        } else if (nextFieldObj.type === 'number' || nextFieldObj.min !== undefined) {
-          extractionPrompt = `Extract the numeric value from this user message: "${userMessage}"`;
-          aiExtracted = await getGroqNumericExtraction(extractionPrompt);
-        } else {
-          extractionPrompt = `From this user message: "${userMessage}", extract the value for ${nextFieldObj.label}. Return just the value, or "null" if unclear.`;
-          aiExtracted = await getGroqConversationalResponse(extractionPrompt);
-        }
-        
-        let cleanedAI = aiExtracted.trim().replace(/['"]/g, '');
-        console.log('[DEBUG] AI extracted response:', cleanedAI);
-        
-        if (cleanedAI && cleanedAI.toLowerCase() !== 'null' && cleanedAI.toLowerCase() !== 'invalid' && cleanedAI.length > 0) {
-          // For options, validate against available options
-          if (nextFieldObj.options && nextFieldObj.options.length > 0) {
-            const matchedOption = nextFieldObj.options.find(opt => 
-              opt.toLowerCase() === cleanedAI.toLowerCase()
-            );
-            if (matchedOption) {
-              extractedValue = matchedOption;
-              console.log('[DEBUG] AI found option match:', matchedOption);
-            }
-          } else if (nextFieldObj.type === 'number' || nextFieldObj.min !== undefined) {
-            // For number fields, accept a string that is a valid number
-            const numStr = cleanedAI.trim();
-            console.log('[DEBUG] Checking numeric string:', numStr);
-            if (/^\d+(\.\d+)?$/.test(numStr)) {
-              const num = parseInt(numStr, 10);
-              if ((nextFieldObj.min === undefined || num >= nextFieldObj.min) &&
-                  (nextFieldObj.max === undefined || num <= nextFieldObj.max)) {
-                extractedValue = num.toString();
-                console.log('[DEBUG] AI extracted valid number:', extractedValue);
-              } else {
-                console.log('[DEBUG] AI extracted number out of range:', num);
-              }
-            } else {
-              console.log('[DEBUG] AI numeric extraction failed - not a valid number format:', numStr);
-            }
-          } else {
-            extractedValue = cleanedAI;
-            console.log('[DEBUG] AI extracted value:', cleanedAI);
-          }
-        }
-      } catch (e) {
-        console.log('[DEBUG] AI extraction failed:', e.message);
-      }
-    }
-
-    console.log('[DEBUG] Final extracted value:', extractedValue, 'for field:', nextFieldObj.key);
-
-    // Handle successful field extraction
-    if (extractedValue !== null && extractedValue !== undefined && extractedValue !== '') {
-      console.log('[DEBUG] *** UPDATING FIELD ***');
-      // Always store as string for comparison
-      console.log('[DEBUG] About to update field:', nextFieldObj.key, 'with value:', extractedValue);
-      console.log('[DEBUG] Fields before update:', JSON.stringify(currentService.fields));
-      updateFields(currentService.fields, nextFieldObj, extractedValue.toString());
-      setSessionState(sessionId, state);
-      console.log('[DEBUG] Fields after update:', JSON.stringify(currentService.fields));
-      
-      // Check next missing field after update
-      const updatedRequiredFields = await getRequiredFields(currentService.name);
-      const nextField = getNextMissingField(currentService.fields, updatedRequiredFields);
-      console.log('[DEBUG] Next missing field after update:', nextField);
-      
-      if (nextField) {
-        // Prompt for next field using metadata
-        let nextPrompt;
-        if (nextField.aiQuestion) {
-          nextPrompt = nextField.aiQuestion;
-        } else if (nextField.options && Array.isArray(nextField.options) && nextField.options.length > 0) {
-          const fieldContext = nextField.label || nextField.key;
-          const description = nextField.description ? ` ${nextField.description}.` : '';
-          nextPrompt = `What ${fieldContext.toLowerCase()} would you like?${description} Available options: ${nextField.options.join(', ')}. If you need help choosing, I can explain each option.`;
-        } else if (nextField.type === 'number' || (nextField.min && nextField.max)) {
-          nextPrompt = `Please enter a value for ${nextField.label || nextField.key}`;
-          if (nextField.min !== undefined && nextField.max !== undefined) {
-            nextPrompt += ` (range: ${nextField.min} to ${nextField.max})`;
-          }
-        } else {
-          nextPrompt = `What would you like for ${nextField.label || nextField.key}?`;
-        }
-        chatHistories.get(sessionId).push({ role: 'assistant', content: nextPrompt });
-        return res.json({ message: nextPrompt });
-      } else {
-        // Current service fields complete - move to next service or calculate pricing
-        services[currentServiceIdx].complete = true;
-        if (currentServiceIdx < services.length - 1) {
-          state.currentServiceIdx++;
-          setSessionState(sessionId, state);
-          // Let AI introduce the next service naturally
-          const nextServiceName = services[state.currentServiceIdx].name.toUpperCase();
-          const aiMsg = await getGroqConversationalResponse(
-            `The user has finished configuring ${currentService.name.toUpperCase()}. Now they need to configure ${nextServiceName}. Transition smoothly and ask if they're ready to configure ${nextServiceName}.`
-          );
-          const msg = stringifyMessage(aiMsg);
-          chatHistories.get(sessionId).push({ role: 'assistant', content: msg });
-          return res.json({ message: msg });
-        } else {
-          // All services complete - calculate pricing and show summary
-          console.log('[DEBUG] *** ALL SERVICES COMPLETE - CALCULATING PRICING ***');
-          console.log('[DEBUG] Final services configuration:', JSON.stringify(services, null, 2));
-          
-          // Calculate pricing for each service
-          const servicesArr = [];
-          let totalCost = 0;
-          let totalSubtotal = 0;
-          let totalVAT = 0;
-          
-          for (const service of services) {
-            console.log(`[DEBUG] Processing pricing for ${service.name}:`, service.fields);
-            
-            let servicePricing = { subtotalSAR: 0, vatSAR: 0, totalMonthlySAR: 0 };
-            
-            try {
-              if (service.name.toLowerCase() === 'ecs') {
-                // Use the detailed ECS pricing engine
-                const { calculatePrice } = await import('../logic/pricing.js');
-                servicePricing = calculatePrice(service.fields);
-                console.log(`[DEBUG] ECS pricing result:`, servicePricing);
-              } else {
-                // Use the general pricing engine for other services
-                const pricingInput = { [service.name]: service.fields };
-                servicePricing = calculatePricing(pricingInput);
-                console.log(`[DEBUG] ${service.name} pricing result:`, servicePricing);
-              }
-            } catch (e) {
-              console.error(`[DEBUG] Pricing error for ${service.name}:`, e);
-              servicePricing = { subtotalSAR: 0, vatSAR: 0, totalMonthlySAR: 0 };
+            // Fetch service details from database
+            const service = await Service.findOne({ name: selectedServiceName });
+            if (!service) {
+              const errorMsg = `Sorry, I couldn't find the ${selectedServiceName.toUpperCase()} service in our database. Please try again.`;
+              chatHistories.get(sessionId).push({ role: 'assistant', content: errorMsg });
+              return res.json({ message: errorMsg });
             }
             
-            // Build service summary for frontend - pass fields as object
-            servicesArr.push({
-              name: service.name.toUpperCase(),
-              config: service.fields, // Pass the actual fields object
-              monthlyCost: servicePricing.totalMonthlySAR,
-              subtotal: servicePricing.subtotalSAR || servicePricing.subtotal,
-              vat: servicePricing.vatSAR || servicePricing.vat
+            console.log(`[DEBUG] Found service ${service.displayName} with ${service.requiredFields.length} required fields`);
+            
+            // Start asking the first question
+            const firstField = service.requiredFields[0];
+            
+            setSessionState(sessionId, {
+              mode: 'manual_configuration',
+              currentService: selectedServiceName,
+              serviceInfo: service,
+              currentFieldIndex: 0,
+              collectedFields: {},
+              configuredServices: state.configuredServices || [], // Preserve existing services
+              awaitingFieldInput: true,
+              awaitingServiceSelection: false
             });
             
-            totalCost += servicePricing.totalMonthlySAR || 0;
-            totalSubtotal += servicePricing.subtotalSAR || servicePricing.subtotal || 0;
-            totalVAT += servicePricing.vatSAR || servicePricing.vat || 0;
+            let fieldPrompt = `Great! Let's configure your ${service.displayName}.
+
+${service.description}
+
+Question 1 of ${service.requiredFields.length}:
+
+${firstField.aiQuestion || firstField.label}`;
+
+            if (firstField.type === 'option' && firstField.options) {
+              fieldPrompt += `\n\nAvailable options:\n${firstField.options.map(opt => `- ${opt}`).join('\n')}`;
+            }
+            
+            if (firstField.type === 'number' && (firstField.min || firstField.max)) {
+              fieldPrompt += `\n\nRange: ${firstField.min || 0} - ${firstField.max || 'unlimited'}`;
+            }
+
+            chatHistories.get(sessionId).push({ role: 'assistant', content: fieldPrompt });
+            return res.json({ message: fieldPrompt });
+            
+          } catch (error) {
+            console.error('[DEBUG] Error fetching service:', error);
+            const errorMsg = `Sorry, there was an error accessing the service database. Please try again.`;
+            chatHistories.get(sessionId).push({ role: 'assistant', content: errorMsg });
+            return res.json({ message: errorMsg });
           }
+        }
+        
+        // If they mention multiple services
+        if (/ecs.*oss|ecs.*tdsql|oss.*tdsql/i.test(userMessage)) {
+          const multiMsg = `I see you want multiple services! Let's configure them one by one.
+
+Which service would you like to configure first?
+- **ECS** (Elastic Compute Service) - Virtual machines
+- **OSS** (Object Storage Service) - File storage  
+- **TDSQL** (Database Service) - Managed databases
+
+Just tell me which one to start with.`;
+
+          chatHistories.get(sessionId).push({ role: 'assistant', content: multiMsg });
+          return res.json({ message: multiMsg });
+        }
+      }
+      
+      if (state.awaitingFieldInput) {
+        console.log('[DEBUG] Processing field input for field index:', state.currentFieldIndex);
+        
+        const service = state.serviceInfo;
+        const currentField = service.requiredFields[state.currentFieldIndex];
+        const userInput = userMessage.trim();
+        
+        console.log(`[DEBUG] Current field: ${currentField.key}, type: ${currentField.type}, user input: ${userInput}`);
+        
+        // Validate the input based on field type
+        let isValid = false;
+        let parsedValue = null;
+        let errorMessage = '';
+        
+        if (currentField.type === 'option') {
+          const normalizedInput = userInput.toLowerCase();
+          const validOption = currentField.options.find(opt => 
+            opt.toLowerCase() === normalizedInput || 
+            opt.toLowerCase().includes(normalizedInput) ||
+            normalizedInput.includes(opt.toLowerCase())
+          );
           
-          const totalPricing = {
-            subtotal: +totalSubtotal.toFixed(2),
-            vat: +totalVAT.toFixed(2),
-            totalMonthlySAR: +totalCost.toFixed(2)
+          if (validOption) {
+            isValid = true;
+            parsedValue = validOption;
+          } else {
+            errorMessage = `Please choose from the available options: ${currentField.options.join(', ')}`;
+          }
+        } else if (currentField.type === 'number') {
+          const numValue = parseInt(userInput);
+          if (!isNaN(numValue)) {
+            if (currentField.min && numValue < currentField.min) {
+              errorMessage = `Value must be at least ${currentField.min}`;
+            } else if (currentField.max && numValue > currentField.max) {
+              errorMessage = `Value must be no more than ${currentField.max}`;
+            } else {
+              isValid = true;
+              parsedValue = numValue;
+            }
+          } else {
+            errorMessage = `Please enter a valid number`;
+          }
+        } else {
+          // For text fields, just accept the input
+          isValid = true;
+          parsedValue = userInput;
+        }
+        
+        if (!isValid) {
+          const retryMsg = `${errorMessage}
+
+**${currentField.aiQuestion || currentField.label}**
+
+${currentField.type === 'option' && currentField.options ? 
+`**Available options:**\n${currentField.options.map(opt => `• ${opt}`).join('\n')}` : ''}
+
+${currentField.type === 'number' && (currentField.min || currentField.max) ? 
+`**Range:** ${currentField.min || 0} - ${currentField.max || 'unlimited'}` : ''}`;
+
+          chatHistories.get(sessionId).push({ role: 'assistant', content: retryMsg });
+          return res.json({ message: retryMsg });
+        }
+        
+        // Valid input - save it and move to next field
+        const updatedFields = { ...state.collectedFields };
+        updatedFields[currentField.key] = parsedValue;
+        
+        console.log(`[DEBUG] Saved field ${currentField.key} = ${parsedValue}`);
+        
+        const nextFieldIndex = state.currentFieldIndex + 1;
+        
+        if (nextFieldIndex >= service.requiredFields.length) {
+          // All fields collected - calculate pricing and show summary
+          console.log('[DEBUG] All fields collected, calculating pricing');
+          
+          try {
+            const pricingConfig = {};
+            pricingConfig[state.currentService] = updatedFields;
+            
+            const pricing = calculatePricing(pricingConfig);
+            
+            const summaryMsg = `Perfect! Here's your ${service.displayName} configuration:
+
+Configuration Summary:
+${Object.entries(updatedFields).map(([key, value]) => {
+  const field = service.requiredFields.find(f => f.key === key);
+  return `- ${field?.label || key}: ${value}`;
+}).join('\n')}
+
+Monthly Cost: SAR ${pricing.totalMonthlySAR?.toFixed(2) || 0} (including 15% VAT)
+
+Cost Breakdown:
+- Subtotal: SAR ${pricing.subtotalSAR?.toFixed(2) || 0}
+- VAT (15%): SAR ${pricing.vatSAR?.toFixed(2) || 0}
+- Total: SAR ${pricing.totalMonthlySAR?.toFixed(2) || 0}
+
+Is this configuration correct? Reply with:
+- "Yes" to confirm and finalize
+- "Modify" to change the configuration
+- "Add more services" to configure additional services`;          // Get existing configured services from state or initialize empty array
+          const existingServices = (state && state.configuredServices) ? state.configuredServices : [];
+          
+          // Create new service configuration
+          const newServiceConfig = {
+            name: service.displayName,
+            description: service.description,
+            config: updatedFields,
+            monthlyCost: pricing.subtotalSAR || 0,
+            serviceName: state.currentService
           };
           
-          console.log('[DEBUG] *** FINAL PRICING SUMMARY ***');
-          console.log('[DEBUG] Services:', servicesArr);
-          console.log('[DEBUG] Total pricing:', totalPricing);
+          // Add to configured services
+          const allConfiguredServices = [...existingServices, newServiceConfig];
+
+            setSessionState(sessionId, {
+              mode: 'manual_configuration',
+              currentService: state.currentService,
+              serviceInfo: service,
+              collectedFields: updatedFields,
+              pricing: pricing,
+              configuredServices: allConfiguredServices,
+              awaitingConfirmation: true,
+              awaitingFieldInput: false
+            });
+
+            chatHistories.get(sessionId).push({ role: 'assistant', content: summaryMsg });
+            
+            return res.json({ 
+              message: summaryMsg,
+              complete: true,
+              services: allConfiguredServices,
+              pricing: {
+                subtotal: pricing.subtotalSAR || 0,
+                vat: pricing.vatSAR || 0,
+                totalMonthlySAR: pricing.totalMonthlySAR || 0
+              }
+            });
+            
+          } catch (error) {
+            console.error('[DEBUG] Pricing calculation error:', error);
+            const errorMsg = `Configuration saved! However, there was an error calculating pricing. You can proceed with the configuration.`;
+            chatHistories.get(sessionId).push({ role: 'assistant', content: errorMsg });
+            return res.json({ message: errorMsg });
+          }
+        } else {
+          // Move to next field
+          const nextField = service.requiredFields[nextFieldIndex];
           
-          // Generate a final summary message
-          const summaryMsg = `Configuration complete! Total monthly cost: ${totalPricing.totalMonthlySAR} SAR (including VAT)`;
-          chatHistories.get(sessionId).push({ role: 'assistant', content: summaryMsg });
+          setSessionState(sessionId, {
+            mode: 'manual_configuration',
+            currentService: state.currentService,
+            serviceInfo: service,
+            currentFieldIndex: nextFieldIndex,
+            collectedFields: updatedFields,
+            configuredServices: state.configuredServices || [], // Preserve existing services
+            awaitingFieldInput: true
+          });
           
-          // Clear session
-          setSessionState(sessionId, null);
-          chatHistories.delete(sessionId);
+          let nextFieldPrompt = `Great! ✅ ${currentField.label}: ${parsedValue}
+
+Question ${nextFieldIndex + 1} of ${service.requiredFields.length}:
+
+${nextField.aiQuestion || nextField.label}`;
+
+          if (nextField.type === 'option' && nextField.options) {
+            nextFieldPrompt += `\n\nAvailable options:\n${nextField.options.map(opt => `- ${opt}`).join('\n')}`;
+          }
           
+          if (nextField.type === 'number' && (nextField.min || nextField.max)) {
+            nextFieldPrompt += `\n\nRange: ${nextField.min || 0} - ${nextField.max || 'unlimited'}`;
+          }
+
+          chatHistories.get(sessionId).push({ role: 'assistant', content: nextFieldPrompt });
+          return res.json({ message: nextFieldPrompt });
+        }
+      }
+      
+      if (state.awaitingConfirmation) {
+        console.log('[DEBUG] Processing confirmation, userMessage:', userMessage);
+        
+        if (/^yes|^y$|^ok|^okay|^confirm/i.test(userMessage.trim())) {
+          // Get all configured services and calculate total pricing
+          const allServices = state.configuredServices || [];
+          console.log('[DEBUG] All configured services:', JSON.stringify(allServices, null, 2));
+          let totalPricing = { subtotal: 0, vat: 0, totalMonthlySAR: 0 };
+          
+          if (allServices.length > 0) {
+            // Calculate combined pricing for all services
+            const combinedConfig = {};
+            allServices.forEach(service => {
+              if (service.serviceName && service.config) {
+                // Use lowercase service name as key
+                combinedConfig[service.serviceName.toLowerCase()] = service.config;
+              }
+            });
+            
+            try {
+              console.log('[DEBUG] Combined config for pricing:', JSON.stringify(combinedConfig, null, 2));
+              const pricing = calculatePricing(combinedConfig);
+              console.log('[DEBUG] Calculated pricing result:', pricing);
+              totalPricing = {
+                subtotal: pricing.subtotalSAR || 0,
+                vat: pricing.vatSAR || 0,
+                totalMonthlySAR: pricing.totalMonthlySAR || 0
+              };
+            } catch (error) {
+              console.log('[DEBUG] Error calculating combined pricing:', error);
+            }
+          }
+
+          const finalMsg = `✅ Configuration Confirmed!
+
+Your services have been configured successfully:
+${allServices.map(service => `- ${service.name} - SAR ${service.monthlyCost.toFixed(2)}/month`).join('\n')}
+
+Total Monthly Cost: SAR ${totalPricing.totalMonthlySAR.toFixed(2)} (including 15% VAT)
+
+You can see all configurations and pricing in the suggestion panel on the right.
+
+Would you like to:
+- Add more services (configure additional services)
+- Finalize this configuration
+- Start a new configuration`;
+
+          chatHistories.get(sessionId).push({ role: 'assistant', content: finalMsg });
           return res.json({ 
-            message: summaryMsg,
-            services: servicesArr, 
-            pricing: totalPricing,
-            complete: true
+            message: finalMsg,
+            complete: true,
+            services: allServices,
+            pricing: totalPricing
           });
         }
+        
+        // Handle "Add more services" request
+        if (/add.*more|more.*service|another.*service|additional.*service/i.test(userMessage)) {
+          console.log('[DEBUG] User requested to add more services, current configured services:', state.configuredServices?.length || 0);
+          
+          // Reset state to allow service selection again but keep configured services
+          setSessionState(sessionId, {
+            mode: 'manual_configuration',
+            configuredServices: state.configuredServices || [], // Keep existing services
+            awaitingServiceSelection: true,
+            awaitingConfirmation: false
+          });
+          
+          const addMoreMsg = `Great! Let's configure another service. 
+
+Which additional service would you like to configure?
+- ECS - Elastic Compute Service (Virtual machines)
+- OSS - Object Storage Service (File storage)  
+- TDSQL - Database Service (Managed databases)
+
+Please type the service name (ECS, OSS, or TDSQL):`;
+
+          chatHistories.get(sessionId).push({ role: 'assistant', content: addMoreMsg });
+          return res.json({ message: addMoreMsg });
+        }
+        
+        if (/modify|change|adjust/i.test(userMessage)) {
+          // Reset to first field to restart configuration
+          const firstField = state.serviceInfo.requiredFields[0];
+          
+          setSessionState(sessionId, {
+            mode: 'manual_configuration',
+            currentService: state.currentService,
+            serviceInfo: state.serviceInfo,
+            currentFieldIndex: 0,
+            collectedFields: {},
+            configuredServices: state.configuredServices || [], // Preserve existing services
+            awaitingFieldInput: true,
+            awaitingConfirmation: false
+          });
+          
+          let fieldPrompt = `Let's reconfigure your ${state.serviceInfo.displayName}.
+
+Question 1 of ${state.serviceInfo.requiredFields.length}:
+
+${firstField.aiQuestion || firstField.label}`;
+
+          if (firstField.type === 'option' && firstField.options) {
+            fieldPrompt += `\n\nAvailable options:\n${firstField.options.map(opt => `- ${opt}`).join('\n')}`;
+          }
+          
+          if (firstField.type === 'number' && (firstField.min || firstField.max)) {
+            fieldPrompt += `\n\nRange: ${firstField.min || 0} - ${firstField.max || 'unlimited'}`;
+          }
+
+          chatHistories.get(sessionId).push({ role: 'assistant', content: fieldPrompt });
+          return res.json({ message: fieldPrompt });
+        }
+      }
+      
+      // If we're in manual configuration mode but the input wasn't handled above,
+      // provide a helpful error message instead of falling through to AI suggestions
+      const errorMsg = `I didn't understand that. In manual configuration mode, please:
+
+      ${state.awaitingServiceSelection ? 
+        '- Type a service name: ECS, OSS, or TDSQL' :
+        state.awaitingFieldInput ? 
+        '- Provide the requested information for the current field' :
+        state.awaitingConfirmation ?
+        '- Reply "Yes" to confirm, "Modify" to change, or "Add more services"' :
+        '- Follow the prompts for manual configuration'
+      }
+      
+      Or type "restart" to begin again.`;
+      
+      chatHistories.get(sessionId).push({ role: 'assistant', content: errorMsg });
+      return res.json({ message: errorMsg });
+    }
+
+    // Handle subsequent messages for AI suggestions
+    if (!state || (state && !state.mode)) {
+      console.log('[DEBUG] Checking subsequent messages for AI suggestions, userMessage:', userMessage);
+      
+      // Check if user is now requesting AI suggestions or describing their application
+      if (/option.*2|choice.*2|ai.*suggest|suggest|recommendation|streaming|platform|application|app|users|concurrent|live.*stream|web.*app|e-commerce|database.*users|mobile.*app/i.test(userMessage)) {
+        console.log('[DEBUG] User requesting AI suggestions in follow-up message');
+        
+        // If they just said "option 2" and haven't described their app yet, ask for details
+        if (/option.*2|choice.*2|ai.*suggest|suggest|recommendation/i.test(userMessage) && !/streaming|platform|application|app|users|concurrent|live.*stream|web.*app|e-commerce|database.*users|mobile.*app/i.test(userMessage)) {
+          setSessionState(sessionId, { 
+            mode: 'suggestion_gathering',
+            awaitingRequirements: true 
+          });
+          
+          const promptMsg = `Perfect! I'll help you design the ideal cloud architecture based on your specific requirements.
+
+Please describe your application in detail. For example:
+- "Live streaming platform with 100 concurrent users per hour"
+- "E-commerce platform with file storage for 5000 customers"  
+- "API backend with analytics for mobile app"
+
+What type of application are you building and what are your expected usage patterns?`;
+
+          chatHistories.get(sessionId).push({ role: 'assistant', content: promptMsg });
+          return res.json({ message: promptMsg });
+        }
+        
+        // If they're describing their application, process it immediately
+        console.log('[DEBUG] User is describing application, processing as requirements immediately');
+        
+        // Generate AI suggestion based on user requirements
+        const aiSuggestion = await getGroqAIResponse('ai_suggestion', userMessage);
+        console.log('[DEBUG] AI Suggestion received:', aiSuggestion);
+        
+        // Parse the AI response
+        let suggestion;
+        try {
+          suggestion = typeof aiSuggestion === 'string' ? JSON.parse(aiSuggestion) : aiSuggestion;
+        } catch (e) {
+          console.log('[DEBUG] Failed to parse AI suggestion, using fallback');
+          suggestion = {
+            analysis: "Based on your mobile application requirements with 4,000 users and 100 orders per day, I recommend a balanced setup.",
+            recommendedServices: [
+              { name: "ecs", reason: "For reliable application hosting with scalable compute power", config: { instanceType: "ecs.g6.xlarge", instanceCount: 3, region: "riyadh", osType: "Linux" }},
+              { name: "tdsql", reason: "For secure order and user data management", config: { engine: "MySQL 8.0", instanceSize: "large", storageSize: "1000", backupRetention: "7 days" }}
+            ],
+            estimatedCapacity: "400 concurrent users with room for 600 peak traffic",
+            monthlyCost: "~5700 SAR/month",
+            nextSteps: "Please confirm if this configuration meets your needs."
+          };
+        }
+
+        // Calculate real pricing for the suggested services
+        let totalPricing = { subtotal: 0, vat: 0, total: 0 };
+        try {
+          const serviceConfigs = suggestion.recommendedServices || [];
+          const pricingConfig = {};
+          
+          // Transform service suggestions to pricing config format
+          for (const service of serviceConfigs) {
+            if (service.config && service.name) {
+              pricingConfig[service.name.toLowerCase()] = service.config;
+            }
+          }
+          
+          console.log('[DEBUG] Pricing config for immediate processing:', pricingConfig);
+          
+          if (Object.keys(pricingConfig).length > 0) {
+            const pricing = calculatePricing(pricingConfig);
+            totalPricing.subtotal = pricing.subtotal || pricing.subtotalSAR || 0;
+            totalPricing.vat = pricing.vat || pricing.vatSAR || 0;
+            totalPricing.total = pricing.total || pricing.totalMonthlySAR || 0;
+          }
+        } catch (pricingError) {
+          console.log('[DEBUG] Pricing calculation error:', pricingError);
+        }
+
+        // Format the response with pricing
+        const responseMsg = `Perfect! Based on your requirements: "${userMessage}"
+
+## 📊 **Recommended Configuration**
+
+**${suggestion.analysis}**
+
+### **Suggested Services:**
+
+${(suggestion.recommendedServices || []).map(service => 
+`**${service.name.toUpperCase()}** - ${service.reason}
+Configuration: ${JSON.stringify(service.config, null, 2)}`
+).join('\n\n')}
+
+### **📈 Capacity & Performance:**
+- **Estimated Capacity:** ${suggestion.estimatedCapacity}
+- **Estimated Monthly Cost:** ${totalPricing.total > 0 ? `${totalPricing.total.toFixed(2)} SAR/month (including 15% VAT)` : suggestion.monthlyCost}
+
+### **💰 Cost Breakdown:**
+- **Subtotal:** ${totalPricing.subtotal.toFixed(2)} SAR
+- **VAT (15%):** ${totalPricing.vat.toFixed(2)} SAR
+- **Total:** ${totalPricing.total.toFixed(2)} SAR/month
+
+### **Next Steps:**
+${suggestion.nextSteps}
+
+**Do you want me to proceed with this configuration?** 
+Reply with:
+- "**Yes**" to proceed with this setup
+- "**Modify**" to adjust any service
+- "**Manual**" to configure services yourself`;
+
+        chatHistories.get(sessionId).push({ role: 'assistant', content: responseMsg });
+        
+        setSessionState(sessionId, { 
+          mode: 'suggestion_provided',
+          suggestedServices: suggestion.recommendedServices,
+          pricing: {
+            subtotal: totalPricing.subtotal,
+            vat: totalPricing.vat,
+            totalMonthlySAR: totalPricing.total
+          },
+          awaitingConfirmation: true 
+        });
+
+        return res.json({ 
+          message: responseMsg,
+          complete: true,
+          services: suggestion.recommendedServices.map(service => ({
+            name: service.name,
+            description: service.reason,
+            config: service.config,
+            monthlyCost: service.monthlyCost || 0
+          })),
+          pricing: {
+            subtotal: totalPricing.subtotal,
+            vat: totalPricing.vat,
+            totalMonthlySAR: totalPricing.total
+          }
+        });
+      }
+      
+      // Handle manual configuration option
+      console.log('[DEBUG] Testing manual config pattern on:', userMessage);
+      console.log('[DEBUG] Manual pattern test result:', /option.*1|choice.*1|manual|configure.*myself/i.test(userMessage));
+      
+      if (/option.*1|choice.*1|manual|configure.*myself/i.test(userMessage)) {
+        console.log('[DEBUG] User chose manual configuration');
+        
+        setSessionState(sessionId, {
+          mode: 'manual_configuration',
+          awaitingServiceSelection: true
+        });
+        
+        const manualMsg = `Perfect! Let's configure your services manually. Which services would you like to set up?
+
+Available services:
+- **ECS** (Elastic Compute Service) - Virtual machines and compute power
+- **OSS** (Object Storage Service) - File storage and backup  
+- **TDSQL** (Database Service) - Managed database solutions
+
+Just tell me which ones you need (e.g., "ECS", "OSS", or "ECS and TDSQL").`;
+
+        chatHistories.get(sessionId).push({ role: 'assistant', content: manualMsg });
+        return res.json({ message: manualMsg });
       }
     }
 
-    // If no value was extracted, provide intelligent help based on field type and user input
-    let retryMessage;
+    // Default fallback response
+    const fallbackMsg = await getGroqConversationalResponse(
+      `The user said: "${userMessage}". Help them choose between manual configuration (ECS, OSS, TDSQL services) or AI suggestions for their cloud setup. Be helpful and guide them toward making a choice.`
+    );
     
-    // Check if user provided an ambiguous answer that we can help clarify
-    const isAmbiguousAnswer = userMessage.trim().length > 0 && 
-                             !userMessage.toLowerCase().includes('?') &&
-                             !(/\b(help|explain|what|how|tell me|info|information|details|options|choices|difference|clarify|don't understand|confused)\b/i.test(userMessage));
-    
-    if (isAmbiguousAnswer) {
-      console.log('[DEBUG] User provided ambiguous answer, trying to help clarify');
-      
-      if (nextFieldObj.options && Array.isArray(nextFieldObj.options) && nextFieldObj.options.length > 0) {
-        // For option fields, help user understand the options
-        retryMessage = await getGroqConversationalResponse(
-          `The user said "${userMessage}" for ${nextFieldObj.label || nextFieldObj.key}, but the available options are: ${nextFieldObj.options.join(', ')}. Help them understand which option matches what they want. Be helpful and suggest the closest option or ask for clarification.`
-        );
-      } else if (nextFieldObj.type === 'number' || nextFieldObj.min !== undefined || nextFieldObj.max !== undefined) {
-        // For number fields, help with range validation
-        const rangeInfo = (nextFieldObj.min !== undefined && nextFieldObj.max !== undefined) 
-          ? ` The value should be between ${nextFieldObj.min} and ${nextFieldObj.max}.` 
-          : '';
-        retryMessage = await getGroqConversationalResponse(
-          `The user said "${userMessage}" for ${nextFieldObj.label || nextFieldObj.key}, but I need a specific number.${rangeInfo} Help them provide the right numeric value based on their request.`
-        );
-      } else {
-        // For text fields, ask for clarification
-        retryMessage = await getGroqConversationalResponse(
-          `The user said "${userMessage}" for ${nextFieldObj.label || nextFieldObj.key}. Help them provide clearer information for this field. Be helpful and ask for clarification.`
-        );
-      }
-    } else {
-      // Default retry messages
-      if (nextFieldObj.options && Array.isArray(nextFieldObj.options) && nextFieldObj.options.length > 0) {
-        const fieldContext = nextFieldObj.label || nextFieldObj.key;
-        const description = nextFieldObj.description ? ` ${nextFieldObj.description}.` : '';
-        retryMessage = `I didn't understand your choice for ${fieldContext.toLowerCase()}.${description} Please select one of these options: ${nextFieldObj.options.join(', ')}`;
-      } else if (nextFieldObj.type === 'number' || nextFieldObj.min !== undefined || nextFieldObj.max !== undefined) {
-        retryMessage = `Please provide a number for ${nextFieldObj.label || nextFieldObj.key}`;
-        if (nextFieldObj.min !== undefined && nextFieldObj.max !== undefined) {
-          retryMessage += ` (between ${nextFieldObj.min} and ${nextFieldObj.max})`;
-        }
-      } else {
-        retryMessage = nextFieldObj.aiQuestion || `What would you like for ${nextFieldObj.label || nextFieldObj.key}?`;
-      }
-    }
-    
-    const msg = stringifyMessage(retryMessage);
+    const msg = stringifyMessage(fallbackMsg);
     chatHistories.get(sessionId).push({ role: 'assistant', content: msg });
     return res.json({ message: msg });
-  } catch (err) {
-    return res.status(500).json({ error: 'Internal server error', details: err.message });
+
+  } catch (error) {
+    console.error('[ERROR] AI route error:', error);
+    return res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 });
 
 export default router;
-//       arr = Object.entries(config)
-//         .filter(([k, v]) => serviceMap[k] && typeof v === 'object')
-//         .map(([k, v]) => {
-//           // Prepare a minimal config for pricing
-//           let serviceConfig = {};
-//           if (k === 'ecs') {
-//             serviceConfig = { service: 'ecs', count: v.count || 1 };
-//           } else if (k === 'oss') {
-//             serviceConfig = { service: 'oss', storageGB: v.storageGB || 0 };
-//           } else if (k === 'tdsql') {
-//             serviceConfig = { service: 'tdsql', nodes: v.nodes || 1 };
-//           }
-//           // Calculate pricing for this service
-//           let monthlyCost = 0;
-//           try {
-//             const pricing = calculatePricing({ services: [serviceConfig] });
-//             monthlyCost = pricing && typeof pricing.totalMonthlySAR === 'number' ? pricing.totalMonthlySAR : 0;
-//           } catch (e) {
-//             console.error(`[AI ROUTE] Pricing error for service ${k}:`, e);
-//           }
-//           return {
-//             name: serviceMap[k].name,
-//             config: serviceMap[k].getConfig(v),
-//             monthlyCost,
-//             raw: v
-//           };
-//         });
-//     }
-//     // Log for debugging
-//     console.log('[AI ROUTE] Returning array to frontend:', arr);
-//     // If nothing matched, send a fallback demo array
-//     if (!arr || arr.length === 0) {
-//       arr = [
-//         { name: 'Elastic Compute Service (ECS)', config: 'ecs.g6.large, Count: 2', monthlyCost: 150 },
-//         { name: 'Object Storage Service (OSS)', config: 'Storage: 100 GB', monthlyCost: 30 },
-//         { name: 'TDSQL', config: 'Nodes: 1, Engine: MySQL', monthlyCost: 120 },
-//       ];
-//     }
-//     res.json({
-//       message: 'Here is the recommended configuration:',
-//       solution: arr
-//     });
-//   } catch (err) {
-//     console.error('[AI ROUTE] Error generating AI config:', err);
-//     res.status(500).json({ error: 'AI config generation failed', details: err.message });
-//   }
-// });
-
-// module.exports = router;
-// routes/ai.js
-// routes/ai.js
-
-// ...existing ESM code at the top of the file remains. Removed all duplicate and CommonJS code below...

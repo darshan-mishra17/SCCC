@@ -31,6 +31,37 @@ export function calculatePricing(config) {
     }
   } else {
     // Handle direct service field mapping
+    if (config.ecs) {
+      // ECS pricing based on instance count and type
+      const instanceCount = parseInt(config.ecs.count) || parseInt(config.ecs.instanceCount) || 1;
+      const instanceType = config.ecs.instanceType || 'ecs.g6.large';
+      const diskSize = parseInt(config.ecs.diskSize) || 40;
+      const bandwidth = parseInt(config.ecs.bandwidth) || 1;
+      
+      // Instance type multipliers
+      let instanceMultiplier = 1;
+      switch (instanceType) {
+        case 'ecs.t6.medium': instanceMultiplier = 0.8; break;
+        case 'ecs.t6.large': instanceMultiplier = 1; break;
+        case 'ecs.g6.large': instanceMultiplier = 1.5; break;
+        case 'ecs.g6.xlarge': instanceMultiplier = 2.5; break;
+        case 'ecs.c6.large': instanceMultiplier = 1.3; break;
+        case 'ecs.c6.xlarge': instanceMultiplier = 2.2; break;
+        default: instanceMultiplier = 1;
+      }
+      
+      // Calculate ECS costs (in USD before multipliers)
+      const instanceHourlyCost = BASE_PRICES.ecs * instanceMultiplier;
+      const bandwidthHourlyCost = bandwidth * 0.02; // $0.02 per Mbps/hour
+      const diskMonthlyCost = diskSize * 0.05; // $0.05 per GB/month
+      
+      const ecsSubtotalUSD = (instanceHourlyCost * HOURS_PER_MONTH * instanceCount) + 
+                            (bandwidthHourlyCost * HOURS_PER_MONTH * instanceCount) + 
+                            (diskMonthlyCost * instanceCount);
+      
+      subtotalUSD += ecsSubtotalUSD;
+      console.log('[DEBUG] ECS pricing: instances =', instanceCount, 'type =', instanceType, 'cost USD =', ecsSubtotalUSD);
+    }
     if (config.oss) {
       // OSS pricing based on storage capacity
       const storageGB = parseInt(config.oss.storageGB) || 0;

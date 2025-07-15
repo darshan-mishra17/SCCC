@@ -150,3 +150,48 @@ export async function calculatePricing(config: any) {
   const res = await axios.post('/api/pricing', config);
   return res.data;
 }
+
+// AI suggestion API functions
+export const aiAPI = {
+  async sendMessage(sessionId: string, userMessage: string) {
+    const response = await axios.post('/api/ai/message', {
+      sessionId,
+      userMessage
+    });
+    return response.data;
+  },
+
+  async getSuggestions(applicationDescription: string) {
+    const response = await axios.post('/api/ai', {
+      promptType: 'suggestion',
+      inputContext: { description: applicationDescription }
+    });
+    return response.data;
+  },
+
+  async optimizeConfiguration(currentConfig: any, requirements: string) {
+    const response = await axios.post('/api/ai', {
+      promptType: 'optimize',
+      inputContext: { config: currentConfig, requirements }
+    });
+    return response.data;
+  }
+};
+
+// Pricing API functions
+export const pricingAPI = {
+  async calculateServicePricing(serviceConfig: any) {
+    const response = await axios.post('/api/pricing', serviceConfig);
+    return response.data;
+  },
+
+  async getServiceOptions(serviceType: 'ECS' | 'OSS' | 'TDSQL') {
+    const response = await axios.get(`/api/pricing/options/${serviceType}`);
+    return response.data;
+  },
+
+  async validateConfiguration(config: any) {
+    const response = await axios.post('/api/pricing/validate', config);
+    return response.data;
+  }
+};

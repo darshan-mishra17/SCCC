@@ -7,7 +7,7 @@ const ChatBot = ({ onFinalConfig }) => {
   const [chat, setChat] = useState([
     { 
       sender: 'ai', 
-      text: 'Hi! Which service would you like to configure: ECS, OSS, or TDSQL?',
+      text: 'Hi! I\'m your AI-powered pricing advisor. Describe your application requirements and I\'ll suggest the perfect cloud solution with accurate pricing. For example: "I need a mobile app backend for 5000 users" or "E-commerce website with payment processing"',
       timestamp: new Date()
     }
   ]);
@@ -50,21 +50,23 @@ const ChatBot = ({ onFinalConfig }) => {
         // Debug: log what we're receiving
         console.log('Received response from backend:', res.data);
         
-        // Check if configuration is complete
+        // Check if AI suggestion is complete
         if (res.data.complete && res.data.services && res.data.pricing) {
-          console.log('[DEBUG] Configuration complete, calling onFinalConfig');
+          console.log('[DEBUG] AI suggestion complete, calling onFinalConfig');
+          console.log('[DEBUG] Services:', res.data.services);
+          console.log('[DEBUG] Pricing:', res.data.pricing);
+          
           if (onFinalConfig) {
             onFinalConfig(res.data.services, res.data.pricing);
           }
         }
         
-        // Aggressively ensure message is always a string
+        // Handle the AI response message
         let messageText;
         try {
           if (typeof res.data.message === 'string') {
             messageText = res.data.message;
           } else if (typeof res.data.message === 'object' && res.data.message !== null) {
-            console.log('Object keys:', Object.keys(res.data.message));
             // Try multiple properties that might contain the actual message
             if (res.data.message.message) {
               messageText = String(res.data.message.message);
@@ -99,9 +101,20 @@ const ChatBot = ({ onFinalConfig }) => {
       }
     } catch (err) {
       console.error('API Error:', err);
+      let errorMessage = 'Sorry, there was an error processing your request. Please try again.';
+      
+      // Provide more specific error messages
+      if (err.response?.status === 500) {
+        errorMessage = 'The AI service is temporarily unavailable. Please try again in a moment.';
+      } else if (err.response?.status === 429) {
+        errorMessage = 'Too many requests. Please wait a moment before trying again.';
+      } else if (err.code === 'NETWORK_ERROR' || !navigator.onLine) {
+        errorMessage = 'Network connection issue. Please check your internet connection.';
+      }
+      
       const errorMessageObj = {
         sender: 'ai',
-        text: 'Sorry, there was an error processing your request. Please try again.',
+        text: errorMessage,
         timestamp: new Date()
       };
       setChat(prev => [...prev, errorMessageObj]);
@@ -182,7 +195,7 @@ const ChatBot = ({ onFinalConfig }) => {
             type="text"
             value={userMessage}
             onChange={(e) => setUserMessage(e.target.value)}
-            placeholder="Type your customer's requirements..."
+            placeholder="Describe your application requirements (e.g., 'I need a mobile app backend with 1000 users')..."
             className="flex-1 h-[4rem] px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm"
             disabled={loading}
             onKeyDown={(e) => {

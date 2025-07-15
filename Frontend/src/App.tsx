@@ -322,6 +322,18 @@ const App: React.FC = () => {
     setPricing({ subtotal: 0, vat: 0, totalMonthlySAR: 0 });
   };
 
+  // Handler for Request Alternative button
+  const handleRequestAlternative = () => {
+    // Clear current services and trigger a new AI suggestion
+    alert('Please describe your requirements again in the chat for alternative recommendations.');
+  };
+
+  // Handler for Manual Adjust button
+  const handleManualAdjust = (serviceIndex: number) => {
+    // For now, show a simple alert. In the future, this could open a configuration modal
+    alert('Manual adjustment feature coming soon! You can currently delete services and request new ones via chat.');
+  };
+
   // Handler for Accept & Finalize button
   const handleAcceptAndFinalize = async () => {
     if (!services || !pricing) return;
@@ -487,6 +499,8 @@ const App: React.FC = () => {
                     onDeleteService={deleteService}
                     onClearAll={clearAllServices}
                     onAcceptAndFinalize={handleAcceptAndFinalize}
+                    onRequestAlternative={handleRequestAlternative}
+                    onManualAdjust={handleManualAdjust}
                   />
                 </div>
               </div>

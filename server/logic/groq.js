@@ -202,6 +202,16 @@ RULES:
 }
 
 async function getGroqAIResponse(promptType, context) {
+  // Check if GROQ API key is valid format
+  if (!GROQ_API_KEY || !GROQ_API_KEY.startsWith('gsk_') || GROQ_API_KEY.length < 50) {
+    console.log('[DEBUG] Invalid GROQ API key detected, using local AI fallback');
+    if (promptType === 'ai_suggestion') {
+      return getLocalAISuggestionFallback(context);
+    }
+    // For other prompt types, return a basic fallback
+    return { error: 'API not available', fallback: true };
+  }
+
   // Use improved prompt builder
   const prompt = buildPrompt(promptType, context);
   try {
@@ -246,6 +256,12 @@ async function getGroqAIResponse(promptType, context) {
   } catch (err) {
     // Log full error for debugging
     console.error('[GROQ ERROR]', err && (err.response?.data || err.stack || err));
+    
+    // Special handling for AI suggestion fallback
+    if (promptType === 'ai_suggestion') {
+      return getLocalAISuggestionFallback(context);
+    }
+    
     // Retry once if malformed
     if (!err._retried) {
       err._retried = true;
@@ -336,6 +352,48 @@ For storage/database options, focus on capacity, performance, durability, and us
 // Local fallback function for when GROQ API is not available
 async function getLocalFallbackResponse(prompt) {
   console.log('[DEBUG] Using local fallback for prompt:', prompt);
+  
+  // Handle AI suggestion requests
+  if (prompt.includes('wants AI suggestions') || prompt.includes('describe their application')) {
+    return `Great! I'd be happy to suggest the perfect cloud configuration for your needs. 
+
+Please describe your application requirements in detail. For example:
+- "A web application with database for 1000 users"
+- "E-commerce platform with file storage for 5000 customers"  
+- "API backend with analytics for mobile app"
+
+The more details you provide about your expected users, features, and performance needs, the better I can tailor the recommendations!`;
+  }
+  
+  // Handle option selection
+  if (prompt.includes('option 2') || prompt.includes('choice 2') || prompt.includes('AI suggestion')) {
+    return `Perfect! I'll help you design the ideal cloud architecture based on your specific requirements.
+
+Please describe your application in detail. For example:
+- "Live streaming platform with 100 concurrent users per hour"
+- "Web application with database for 1000 users"  
+- "E-commerce site with file storage needs"
+
+What type of application are you building and what are your expected usage patterns?`;
+  }
+  
+  // Handle greeting and service selection  
+  if (prompt.includes('Greet them warmly') || prompt.includes('which cloud service')) {
+    return `Hi! Welcome to SCCC AI-Powered Cloud Advisor! 🚀
+
+I can help you configure the perfect cloud solution. You have two options:
+
+**Option 1: Manual Configuration**
+Tell me which services you'd like to configure:
+• ECS (Elastic Compute Service) - Virtual machines and compute power
+• OSS (Object Storage Service) - File storage and backup
+• TDSQL (Database Service) - Managed database solutions
+
+**Option 2: AI Suggestion**
+Describe your application requirements (e.g., "A web application with database for 1000 users") and I'll suggest the best service combination and configuration for you.
+
+Which approach would you prefer?`;
+  }
   
   // Parse the prompt to understand what kind of response is needed
   if (prompt.includes('ask for') && prompt.includes('field')) {
@@ -441,6 +499,283 @@ function getLocalExplanationFallback(prompt) {
   
   // Default explanation
   return "I can provide more detailed information about that option. The system is currently running in offline mode, but I'm still here to help guide you through your cloud service configuration. What specific aspect would you like me to explain further?";
+}
+
+// Intelligent AI suggestion fallback that analyzes user requirements dynamically
+function getLocalAISuggestionFallback(userRequirements) {
+  console.log('[DEBUG] Analyzing user requirements:', userRequirements);
+  
+  // Analyze the user's requirements to determine services and configurations
+  const analysis = analyzeUserRequirements(userRequirements);
+  
+  return {
+    analysis: analysis.summary,
+    recommendedServices: analysis.services,
+    estimatedCapacity: analysis.capacity,
+    performanceExpectations: analysis.performance,
+    monthlyCost: analysis.estimatedCost,
+    scalabilityNotes: analysis.scalability,
+    nextSteps: "Please confirm if this configuration meets your needs, or let me know if you'd like to adjust anything."
+  };
+}
+
+// Advanced requirement analysis function
+function analyzeUserRequirements(requirements) {
+  const req = requirements.toLowerCase();
+  
+  // Extract key metrics
+  const userCount = extractUserCount(req);
+  const appType = detectApplicationType(req);
+  const complexity = assessComplexity(req);
+  
+  const services = [];
+  let totalCost = 0;
+  
+  // Determine ECS requirements
+  const ecsConfig = determineECSConfig(userCount, appType, complexity);
+  if (ecsConfig) {
+    services.push({
+      name: 'ecs',
+      reason: ecsConfig.reason,
+      config: ecsConfig.config
+    });
+    totalCost += ecsConfig.cost;
+  }
+  
+  // Determine database requirements
+  if (requiresDatabase(req)) {
+    const dbConfig = determineDatabaseConfig(userCount, appType, complexity);
+    services.push({
+      name: 'tdsql',
+      reason: dbConfig.reason,
+      config: dbConfig.config
+    });
+    totalCost += dbConfig.cost;
+  }
+  
+  // Determine storage requirements
+  if (requiresStorage(req)) {
+    const storageConfig = determineStorageConfig(userCount, appType, complexity);
+    services.push({
+      name: 'oss',
+      reason: storageConfig.reason,
+      config: storageConfig.config
+    });
+    totalCost += storageConfig.cost;
+  }
+  
+  return {
+    summary: generateAnalysisSummary(userCount, appType, complexity),
+    services: services,
+    capacity: generateCapacityEstimate(userCount, complexity),
+    performance: generatePerformanceExpectation(appType, complexity),
+    estimatedCost: `~${Math.round(totalCost)} SAR/month`,
+    scalability: generateScalabilityNotes(services)
+  };
+}
+
+// Helper functions for requirement analysis
+function extractUserCount(req) {
+  const matches = req.match(/(\d+(?:,\d+)*)\s*(?:users?|customers?|visitors?|people)/i);
+  if (matches) {
+    return parseInt(matches[1].replace(/,/g, ''));
+  }
+  
+  // Look for descriptive terms
+  if (req.includes('small') || req.includes('startup')) return 100;
+  if (req.includes('medium') || req.includes('growing')) return 1000;
+  if (req.includes('large') || req.includes('enterprise')) return 10000;
+  if (req.includes('massive') || req.includes('scale')) return 100000;
+  
+  return 1000; // Default assumption
+}
+
+function detectApplicationType(req) {
+  if (req.includes('web app') || req.includes('website')) return 'web_application';
+  if (req.includes('mobile') || req.includes('app')) return 'mobile_backend';
+  if (req.includes('api') || req.includes('backend')) return 'api_service';
+  if (req.includes('ecommerce') || req.includes('store') || req.includes('shop')) return 'ecommerce';
+  if (req.includes('blog') || req.includes('cms')) return 'content_management';
+  if (req.includes('analytics') || req.includes('dashboard')) return 'analytics_platform';
+  if (req.includes('iot') || req.includes('sensor')) return 'iot_platform';
+  
+  return 'web_application'; // Default
+}
+
+function assessComplexity(req) {
+  let score = 0;
+  
+  // Add complexity points
+  if (req.includes('real-time') || req.includes('live')) score += 2;
+  if (req.includes('analytics') || req.includes('reporting')) score += 2;
+  if (req.includes('file upload') || req.includes('media')) score += 1;
+  if (req.includes('authentication') || req.includes('login')) score += 1;
+  if (req.includes('payment') || req.includes('transaction')) score += 2;
+  if (req.includes('search') || req.includes('recommendation')) score += 2;
+  if (req.includes('microservices') || req.includes('distributed')) score += 3;
+  if (req.includes('machine learning') || req.includes('ai')) score += 3;
+  
+  if (score >= 6) return 'high';
+  if (score >= 3) return 'medium';
+  return 'low';
+}
+
+function determineECSConfig(userCount, appType, complexity) {
+  let instanceType, instanceCount, reason;
+  let cost = 0;
+  
+  if (userCount <= 500 && complexity === 'low') {
+    instanceType = 'ecs.t6.medium';
+    instanceCount = 1;
+    cost = 200;
+    reason = 'Single lightweight instance perfect for small applications with moderate traffic';
+  } else if (userCount <= 2000 && complexity === 'medium') {
+    instanceType = 'ecs.g6.large';
+    instanceCount = 2;
+    cost = 450;
+    reason = 'Load-balanced setup with redundancy for reliable performance under normal loads';
+  } else if (userCount <= 10000 || complexity === 'high') {
+    instanceType = 'ecs.g6.xlarge';
+    instanceCount = 3;
+    cost = 750;
+    reason = 'High-performance cluster capable of handling significant traffic and complex operations';
+  } else {
+    instanceType = 'ecs.c6.2xlarge';
+    instanceCount = 4;
+    cost = 1200;
+    reason = 'Enterprise-grade compute cluster for high-scale applications with demanding requirements';
+  }
+  
+  return {
+    config: {
+      instanceType,
+      instanceCount,
+      region: 'riyadh',
+      osType: 'Linux'
+    },
+    reason,
+    cost
+  };
+}
+
+function requiresDatabase(req) {
+  return req.includes('database') || req.includes('data') || req.includes('store') || 
+         req.includes('user') || req.includes('content') || req.includes('sql') ||
+         !req.includes('static');
+}
+
+function determineDatabaseConfig(userCount, appType, complexity) {
+  let engine, instanceSize, storageSize, reason;
+  let cost = 0;
+  
+  if (userCount <= 1000 && complexity === 'low') {
+    engine = 'MySQL 5.7';
+    instanceSize = 'small';
+    storageSize = '100';
+    cost = 300;
+    reason = 'Lightweight MySQL database suitable for small applications with basic data needs';
+  } else if (userCount <= 5000 && complexity === 'medium') {
+    engine = 'MySQL 8.0';
+    instanceSize = 'medium';
+    storageSize = '500';
+    cost = 500;
+    reason = 'Robust MySQL setup with enhanced performance for growing applications';
+  } else {
+    engine = 'MySQL 8.0';
+    instanceSize = 'large';
+    storageSize = '1000';
+    cost = 800;
+    reason = 'High-performance database configuration for large-scale applications with complex queries';
+  }
+  
+  return {
+    config: {
+      engine,
+      instanceSize,
+      storageSize,
+      backupRetention: '7 days'
+    },
+    reason,
+    cost
+  };
+}
+
+function requiresStorage(req) {
+  return req.includes('file') || req.includes('upload') || req.includes('media') || 
+         req.includes('image') || req.includes('document') || req.includes('backup') ||
+         req.includes('storage') || req.includes('assets');
+}
+
+function determineStorageConfig(userCount, appType, complexity) {
+  let storageGB, redundancy, reason;
+  let cost = 0;
+  
+  if (userCount <= 1000) {
+    storageGB = 100;
+    cost = 50;
+    reason = 'Basic file storage for user uploads and application assets';
+  } else if (userCount <= 5000) {
+    storageGB = 500;
+    cost = 150;
+    reason = 'Scalable storage solution for growing file and media requirements';
+  } else {
+    storageGB = 2000;
+    cost = 400;
+    reason = 'Enterprise storage with high capacity for large-scale file management';
+  }
+  
+  redundancy = complexity === 'high' ? 'IA' : 'Standard';
+  
+  return {
+    config: {
+      storageGB,
+      redundancy,
+      accessTier: 'Hot'
+    },
+    reason,
+    cost
+  };
+}
+
+function generateAnalysisSummary(userCount, appType, complexity) {
+  return `Based on your ${appType.replace('_', ' ')} requirements for ${userCount.toLocaleString()} users with ${complexity} complexity, I recommend a balanced cloud architecture optimized for performance, reliability, and cost-effectiveness.`;
+}
+
+function generateCapacityEstimate(userCount, complexity) {
+  const multiplier = complexity === 'high' ? 2 : complexity === 'medium' ? 1.5 : 1;
+  const concurrent = Math.round((userCount * 0.1) * multiplier);
+  return `${concurrent.toLocaleString()} concurrent users with room for ${Math.round(concurrent * 1.5).toLocaleString()} peak traffic`;
+}
+
+function generatePerformanceExpectation(appType, complexity) {
+  if (complexity === 'high') {
+    return 'Sub-200ms response times, 99.9% uptime, high throughput for complex operations';
+  } else if (complexity === 'medium') {
+    return 'Sub-500ms response times, 99.5% uptime, good performance for typical workloads';
+  } else {
+    return 'Sub-1s response times, 99% uptime, reliable performance for standard operations';
+  }
+}
+
+function generateScalabilityNotes(services) {
+  const hasMultipleECS = services.find(s => s.name === 'ecs')?.config?.instanceCount > 1;
+  const hasStorage = services.some(s => s.name === 'oss');
+  
+  let notes = 'This configuration can scale ';
+  
+  if (hasMultipleECS) {
+    notes += 'horizontally by adding more ECS instances';
+  } else {
+    notes += 'vertically by upgrading instance types';
+  }
+  
+  if (hasStorage) {
+    notes += ' and storage can be increased dynamically based on usage';
+  }
+  
+  notes += '. Auto-scaling policies can be configured for traffic spikes.';
+  
+  return notes;
 }
 
 export { getGroqAIResponse, getGroqConversationalResponse, getGroqNumericExtraction, getGroqExplanation };
