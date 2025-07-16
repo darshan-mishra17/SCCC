@@ -538,47 +538,64 @@ async function getLocalAISuggestionFallback(userRequirements) {
 function selectServicesFromDatabase(availableServices, analysis) {
   const selectedServices = [];
   
-  // Always try to include compute service (ECS or similar)
-  const computeService = availableServices.find(s => s.name.toLowerCase().includes('ecs') || s.description.toLowerCase().includes('compute'));
-  if (computeService) {
-    selectedServices.push({
-      name: computeService.name,
-      reason: `${computeService.displayName} for hosting your application with scalable compute power`,
-      config: computeService.exampleConfig || {}
+  // Use the services from the detailed analysis instead of hardcoded logic
+  if (analysis.services && analysis.services.length > 0) {
+    analysis.services.forEach(serviceAnalysis => {
+      const dbService = availableServices.find(s => s.name.toLowerCase() === serviceAnalysis.name.toLowerCase());
+      if (dbService) {
+        selectedServices.push({
+          name: dbService.name,
+          reason: serviceAnalysis.reason,
+          config: dbService.exampleConfig || serviceAnalysis.config || {}
+        });
+      }
     });
   }
   
-  // Include database service if requirements suggest it
-  if (analysis.needsDatabase) {
-    const dbService = availableServices.find(s => s.name.toLowerCase().includes('tdsql') || s.name.toLowerCase().includes('db') || s.description.toLowerCase().includes('database'));
-    if (dbService) {
+  // Fallback: if analysis didn't provide services, use the old logic
+  if (selectedServices.length === 0) {
+    // Always try to include compute service (ECS or similar)
+    const computeService = availableServices.find(s => s.name.toLowerCase().includes('ecs') || s.description.toLowerCase().includes('compute'));
+    if (computeService) {
       selectedServices.push({
-        name: dbService.name,
-        reason: `${dbService.displayName} for reliable data storage and management`,
-        config: dbService.exampleConfig || {}
+        name: computeService.name,
+        reason: `${computeService.displayName} for hosting your application with scalable compute power`,
+        config: computeService.exampleConfig || {}
       });
     }
-  }
-  
-  // Include storage service
-  const storageService = availableServices.find(s => s.name.toLowerCase().includes('oss') || s.name.toLowerCase().includes('storage'));
-  if (storageService && selectedServices.length < 3) {
-    selectedServices.push({
-      name: storageService.name,
-      reason: `${storageService.displayName} for file storage and static assets`,
-      config: storageService.exampleConfig || {}
-    });
-  }
-  
-  // If still no services, use first available services
-  if (selectedServices.length === 0) {
-    availableServices.slice(0, 2).forEach(service => {
+    
+    // Include database service if requirements suggest it
+    if (analysis.needsDatabase) {
+      const dbService = availableServices.find(s => s.name.toLowerCase().includes('tdsql') || s.name.toLowerCase().includes('db') || s.description.toLowerCase().includes('database'));
+      if (dbService) {
+        selectedServices.push({
+          name: dbService.name,
+          reason: `${dbService.displayName} for reliable data storage and management`,
+          config: dbService.exampleConfig || {}
+        });
+      }
+    }
+    
+    // Include storage service
+    const storageService = availableServices.find(s => s.name.toLowerCase().includes('oss') || s.name.toLowerCase().includes('storage'));
+    if (storageService && selectedServices.length < 3) {
       selectedServices.push({
-        name: service.name,
-        reason: `${service.displayName} - ${service.description}`,
-        config: service.exampleConfig || {}
+        name: storageService.name,
+        reason: `${storageService.displayName} for file storage and static assets`,
+        config: storageService.exampleConfig || {}
       });
-    });
+    }
+    
+    // If still no services, use first available services
+    if (selectedServices.length === 0) {
+      availableServices.slice(0, 2).forEach(service => {
+        selectedServices.push({
+          name: service.name,
+          reason: `${service.displayName} - ${service.description}`,
+          config: service.exampleConfig || {}
+        });
+      });
+    }
   }
   
   return selectedServices;
@@ -645,6 +662,17 @@ function analyzeUserRequirements(requirements) {
       config: storageConfig.config
     });
     totalCost += storageConfig.cost;
+  }
+  
+  // Determine CDN requirements
+  if (requiresCDN(req)) {
+    const cdnConfig = determineCDNConfig(userCount, appType, complexity);
+    services.push({
+      name: 'cdn',
+      reason: cdnConfig.reason,
+      config: cdnConfig.config
+    });
+    totalCost += cdnConfig.cost;
   }
   
   return {
@@ -814,6 +842,48 @@ function determineStorageConfig(userCount, appType, complexity) {
       storageGB,
       redundancy,
       accessTier: 'Hot'
+    },
+    reason,
+    cost
+  };
+}
+
+function requiresCDN(req) {
+  return req.includes('cdn') || req.includes('content delivery') || req.includes('static files') || 
+         req.includes('global') || req.includes('worldwide') || req.includes('fast') || 
+         req.includes('streaming') || req.includes('media') || req.includes('performance') ||
+         req.includes('speed') || req.includes('cache') || req.includes('distribute');
+}
+
+function determineCDNConfig(userCount, appType, complexity) {
+  let bandwidth, regions, cacheSize, reason;
+  let cost = 0;
+  
+  if (userCount <= 1000) {
+    bandwidth = 50;
+    regions = 2;
+    cacheSize = 25;
+    cost = 100;
+    reason = 'Basic CDN for faster content delivery to local and regional users';
+  } else if (userCount <= 5000) {
+    bandwidth = 100;
+    regions = 3;
+    cacheSize = 50;
+    cost = 200;
+    reason = 'Multi-region CDN for improved global content delivery and user experience';
+  } else {
+    bandwidth = 200;
+    regions = 5;
+    cacheSize = 100;
+    cost = 400;
+    reason = 'High-performance global CDN for fast content distribution worldwide';
+  }
+  
+  return {
+    config: {
+      bandwidth,
+      regions,
+      cacheSize
     },
     reason,
     cost

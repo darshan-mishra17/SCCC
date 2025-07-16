@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import ChatBot from './components/chatBot';
 import SuggestionPanel from './components/SuggestionPanel';
@@ -32,6 +33,7 @@ interface User {
 }
 
 const App: React.FC = () => {
+  const navigate = useNavigate();
   const [currentView, setCurrentView] = useState<AppView>('landing');
   const [user, setUser] = useState<User | null>(null);
   const [services, setServices] = useState<Service[] | null>(null);
@@ -63,6 +65,7 @@ const App: React.FC = () => {
   const handleShowLogin = () => setCurrentView('login');
   const handleShowSignup = () => setCurrentView('signup');
   const handleShowLanding = () => setCurrentView('landing');
+  const handleAdminAccess = () => navigate('/admin');
 
   // Authentication handlers
   const handleLogin = async (email: string, password: string) => {
@@ -472,6 +475,7 @@ const App: React.FC = () => {
             onLogin={handleLogin}
             onSwitchToSignup={handleShowSignup}
             onBack={handleShowLanding}
+            onAdminLogin={handleAdminAccess}
           />
         );
 

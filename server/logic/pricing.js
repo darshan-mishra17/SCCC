@@ -1,83 +1,170 @@
 // logic/pricing.js (ESM)
-// Pricing logic for ECS, OSS, TDSQL, etc.
+// Dynamic pricing logic that fetches services from database
 
-export const BASE_PRICES = {
-  ecs: 0.12, // USD/hour per instance
-  oss: 0.025, // USD/GB/month
-  tdsql: 120, // USD/month per node
-};
+import Service from '../models/Service.js';
+
 export const KSA_MULTIPLIER = 1.6;
 export const HOURS_PER_MONTH = 730;
 export const USD_TO_SAR = 3.75;
 export const VAT_RATE = 0.15;
 
-export function calculatePricing(config) {
+// Fallback prices if database is unavailable
+export const FALLBACK_PRICES = {
+  ecs: 0.12, // USD/hour per instance
+  oss: 0.025, // USD/GB/month
+  tdsql: 120, // USD/month per node
+};
+
+async function getServicePrices() {
+  try {
+    const services = await Service.find({ status: 'active' });
+    const prices = {};
+    
+    services.forEach(service => {
+      prices[service.name.toLowerCase()] = {
+        unitPrice: service.unitPrice,
+        currency: service.currency || 'USD',
+        requiredFields: service.requiredFields || [],
+        name: service.name,
+        displayName: service.displayName || service.name
+      };
+    });
+    
+    console.log('[DEBUG] Loaded service prices from database:', Object.keys(prices));
+    return prices;
+  } catch (error) {
+    console.error('[ERROR] Failed to load service prices from database:', error);
+    return FALLBACK_PRICES;
+  }
+}
+
+export async function calculatePricing(config) {
   console.log('[DEBUG] calculatePricing received config:', config);
   
+  const servicePrices = await getServicePrices();
   let subtotalUSD = 0;
+  const serviceBreakdown = [];
   
   // Support both object (ecs/oss/tdsql) and array (services) input
-  if (Array.isArray(config.services)) {
-    for (const s of config.services) {
-      if (s.service && typeof s === 'object') {
-        if (s.service.toLowerCase() === 'ecs') {
-          subtotalUSD += (BASE_PRICES.ecs * HOURS_PER_MONTH * (parseInt(s.count) || 1));
-        } else if (s.service.toLowerCase() === 'oss') {
-          subtotalUSD += (BASE_PRICES.oss * (parseInt(s.storageGB) || 0));
-        } else if (s.service.toLowerCase() === 'tdsql') {
-          subtotalUSD += (BASE_PRICES.tdsql * (parseInt(s.nodes) || 1));
-        }
+  if (Array.isArray(config.services) || Array.isArray(config.recommendedServices)) {
+    const services = config.services || config.recommendedServices || [];
+    
+    for (const serviceConfig of services) {
+      const serviceName = serviceConfig.name || serviceConfig.service;
+      const serviceData = servicePrices[serviceName.toLowerCase()];
+      
+      if (!serviceData) {
+        console.warn(`[WARNING] No pricing data found for service: ${serviceName}`);
+        continue;
       }
+      
+      let serviceCost = 0;
+      const config = serviceConfig.config || serviceConfig;
+      
+      // Calculate cost based on service type and configuration
+      switch (serviceName.toLowerCase()) {
+        case 'ecs':
+          const instanceCount = parseInt(config.instanceCount || config.count) || 1;
+          const instanceType = config.instanceType || 'ecs.g6.large';
+          const diskSize = parseInt(config.diskSize || config.storageSize) || 40;
+          const bandwidth = parseInt(config.bandwidth) || 1;
+          
+          // Instance type multipliers
+          let instanceMultiplier = 1;
+          switch (instanceType) {
+            case 'ecs.t6.medium': instanceMultiplier = 0.8; break;
+            case 'ecs.t6.large': instanceMultiplier = 1; break;
+            case 'ecs.g6.large': instanceMultiplier = 1.5; break;
+            case 'ecs.g6.xlarge': instanceMultiplier = 2.5; break;
+            case 'ecs.c6.large': instanceMultiplier = 1.3; break;
+            case 'ecs.c6.xlarge': instanceMultiplier = 2.2; break;
+            default: instanceMultiplier = 1;
+          }
+          
+          const instanceHourlyCost = serviceData.unitPrice * instanceMultiplier;
+          const bandwidthHourlyCost = bandwidth * 0.02;
+          const diskMonthlyCost = diskSize * 0.05;
+          
+          serviceCost = (instanceHourlyCost * HOURS_PER_MONTH * instanceCount) + 
+                       (bandwidthHourlyCost * HOURS_PER_MONTH * instanceCount) + 
+                       (diskMonthlyCost * instanceCount);
+          break;
+          
+        case 'oss':
+          const storageGB = parseInt(config.storageGB || config.capacity) || 0;
+          serviceCost = serviceData.unitPrice * storageGB;
+          break;
+          
+        case 'tdsql':
+          const nodes = parseInt(config.nodes || config.instanceCount) || 1;
+          const dbStorageGB = parseInt(config.storageGB || config.storageSize) || 20;
+          serviceCost = (serviceData.unitPrice * nodes) + (dbStorageGB * 0.1);
+          break;
+          
+        case 'waf':
+          const domains = parseInt(config.domains) || 1;
+          const protectionLevel = config.protectionLevel || 'standard';
+          let wafMultiplier = protectionLevel === 'premium' ? 2 : 1;
+          serviceCost = serviceData.unitPrice * domains * wafMultiplier * HOURS_PER_MONTH;
+          break;
+          
+        default:
+          // Generic calculation for other services
+          const quantity = parseInt(config.quantity || config.count || config.instances) || 1;
+          serviceCost = serviceData.unitPrice * quantity * HOURS_PER_MONTH;
+          break;
+      }
+      
+      subtotalUSD += serviceCost;
+      serviceBreakdown.push({
+        name: serviceName,
+        displayName: serviceData.displayName,
+        cost: serviceCost,
+        config: config
+      });
+      
+      console.log(`[DEBUG] ${serviceName} pricing: cost USD = ${serviceCost}`);
     }
   } else {
-    // Handle direct service field mapping
-    if (config.ecs) {
-      // ECS pricing based on instance count and type
-      const instanceCount = parseInt(config.ecs.count) || parseInt(config.ecs.instanceCount) || 1;
-      const instanceType = config.ecs.instanceType || 'ecs.g6.large';
-      const diskSize = parseInt(config.ecs.diskSize) || 40;
-      const bandwidth = parseInt(config.ecs.bandwidth) || 1;
+    // Handle legacy direct service field mapping
+    for (const [serviceName, serviceConfig] of Object.entries(config)) {
+      if (serviceName.startsWith('_') || !serviceConfig) continue;
       
-      // Instance type multipliers
-      let instanceMultiplier = 1;
-      switch (instanceType) {
-        case 'ecs.t6.medium': instanceMultiplier = 0.8; break;
-        case 'ecs.t6.large': instanceMultiplier = 1; break;
-        case 'ecs.g6.large': instanceMultiplier = 1.5; break;
-        case 'ecs.g6.xlarge': instanceMultiplier = 2.5; break;
-        case 'ecs.c6.large': instanceMultiplier = 1.3; break;
-        case 'ecs.c6.xlarge': instanceMultiplier = 2.2; break;
-        default: instanceMultiplier = 1;
+      const serviceData = servicePrices[serviceName.toLowerCase()];
+      if (!serviceData) continue;
+      
+      let serviceCost = 0;
+      
+      switch (serviceName.toLowerCase()) {
+        case 'ecs':
+          const instanceCount = parseInt(serviceConfig.count || serviceConfig.instanceCount) || 1;
+          serviceCost = serviceData.unitPrice * HOURS_PER_MONTH * instanceCount;
+          break;
+        case 'oss':
+          const storageGB = parseInt(serviceConfig.storageGB) || 0;
+          serviceCost = serviceData.unitPrice * storageGB;
+          break;
+        case 'tdsql':
+          const nodes = parseInt(serviceConfig.nodes) || 1;
+          serviceCost = serviceData.unitPrice * nodes;
+          break;
+        default:
+          serviceCost = serviceData.unitPrice * HOURS_PER_MONTH;
+          break;
       }
       
-      // Calculate ECS costs (in USD before multipliers)
-      const instanceHourlyCost = BASE_PRICES.ecs * instanceMultiplier;
-      const bandwidthHourlyCost = bandwidth * 0.02; // $0.02 per Mbps/hour
-      const diskMonthlyCost = diskSize * 0.05; // $0.05 per GB/month
-      
-      const ecsSubtotalUSD = (instanceHourlyCost * HOURS_PER_MONTH * instanceCount) + 
-                            (bandwidthHourlyCost * HOURS_PER_MONTH * instanceCount) + 
-                            (diskMonthlyCost * instanceCount);
-      
-      subtotalUSD += ecsSubtotalUSD;
-      console.log('[DEBUG] ECS pricing: instances =', instanceCount, 'type =', instanceType, 'cost USD =', ecsSubtotalUSD);
-    }
-    if (config.oss) {
-      // OSS pricing based on storage capacity
-      const storageGB = parseInt(config.oss.storageGB) || 0;
-      subtotalUSD += (BASE_PRICES.oss * storageGB);
-      console.log('[DEBUG] OSS pricing: storageGB =', storageGB, 'cost =', BASE_PRICES.oss * storageGB);
-    }
-    if (config.tdsql) {
-      // TDSQL pricing based on nodes
-      const nodes = parseInt(config.tdsql.nodes) || 1;
-      const storageGB = parseInt(config.tdsql.storageGB) || 20;
-      subtotalUSD += (BASE_PRICES.tdsql * nodes) + (storageGB * 0.1); // Add storage cost
-      console.log('[DEBUG] TDSQL pricing: nodes =', nodes, 'storageGB =', storageGB);
+      subtotalUSD += serviceCost;
+      serviceBreakdown.push({
+        name: serviceName,
+        displayName: serviceData.displayName,
+        cost: serviceCost,
+        config: serviceConfig
+      });
     }
   }
   
   console.log('[DEBUG] Subtotal USD before multipliers:', subtotalUSD);
+  console.log('[DEBUG] Service breakdown:', serviceBreakdown);
   
   // Apply KSA multiplier
   subtotalUSD *= KSA_MULTIPLIER;
@@ -93,6 +180,10 @@ export function calculatePricing(config) {
     totalMonthlySAR: Math.round(total),
     subtotalSAR: Math.round(subtotalSAR),
     vatSAR: Math.round(vat),
+    serviceBreakdown: serviceBreakdown.map(s => ({
+      ...s,
+      costSAR: Math.round(s.cost * KSA_MULTIPLIER * USD_TO_SAR)
+    }))
   };
   
   console.log('[DEBUG] Final pricing result:', result);

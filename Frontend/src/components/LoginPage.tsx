@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
-import { Eye, EyeOff, Mail, Lock, ArrowRight, User, ArrowLeft } from 'lucide-react';
+import { Eye, EyeOff, Mail, Lock, ArrowRight, User } from 'lucide-react';
 
 interface LoginPageProps {
   onLogin: (email: string, password: string) => void;
   onSwitchToSignup: () => void;
   onBack?: () => void;
+  onAdminLogin?: () => void;
 }
 
-const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onSwitchToSignup, onBack }) => {
+const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onSwitchToSignup, onBack, onAdminLogin }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -50,17 +51,6 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onSwitchToSignup, onBack
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-md w-full space-y-8">
-        {/* Back Button */}
-        {onBack && (
-          <button
-            onClick={onBack}
-            className="flex items-center gap-2 text-gray-600 hover:text-gray-800 transition-colors"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Back to home
-          </button>
-        )}
-
         {/* Header */}
         <div className="text-center">
           <div className="mx-auto h-16 w-16 bg-orange-500 rounded-xl flex items-center justify-center mb-6">
@@ -229,6 +219,16 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onSwitchToSignup, onBack
               Sign up for free
             </button>
           </p>
+          {onAdminLogin && (
+            <div className="mt-4 pt-4 border-t border-gray-200">
+              <button
+                onClick={onAdminLogin}
+                className="text-sm text-gray-500 hover:text-gray-700 transition-colors"
+              >
+                Administrator Access →
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -6,6 +6,10 @@ import aiRouter from './routes/ai.js';
 import quotationsRouter from './routes/quotations.js';
 import authRouter from './routes/auth.js';
 import chatRouter from './routes/chat.js';
+import adminRouter from './routes/admin.js';
+import adminUsersRouter from './routes/adminUsers.js';
+import adminServicesRouter from './routes/adminServices.js';
+import analyticsRouter from './routes/analytics.js';
 
 // import serviceRouter from './routes/services.js';
 
@@ -37,6 +41,10 @@ app.use('/api/ai', aiRouter);
 app.use('/api/auth', authRouter);
 app.use('/api/chat', chatRouter);
 app.use('/api/quotations', quotationsRouter);
+app.use('/api/admin', adminRouter);
+app.use('/api/admin/users', adminUsersRouter);
+app.use('/api/admin/services', adminServicesRouter);
+app.use('/api/admin/analytics', analyticsRouter);
 // app.use('/api/services', serviceRouter);
 
 

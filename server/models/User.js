@@ -38,11 +38,24 @@ const userSchema = new mongoose.Schema({
     enum: ['user', 'admin'],
     default: 'user'
   },
+  status: {
+    type: String,
+    enum: ['active', 'inactive', 'suspended', 'deleted'],
+    default: 'active'
+  },
+  plan: {
+    type: String,
+    enum: ['Basic', 'Professional', 'Enterprise'],
+    default: 'Basic'
+  },
   isActive: {
     type: Boolean,
     default: true
   },
   lastLogin: {
+    type: Date
+  },
+  deletedAt: {
     type: Date
   },
   quotations: [{
